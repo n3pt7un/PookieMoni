@@ -1,0 +1,233 @@
+[settings]
+default_category = "Other"
+auto_categorize = true
+
+[categories.Food]
+stores = [
+    "Supermarket",
+    "Grocery Store",
+    "McDonald's",
+    "Burger King",
+    "Pizza Hut",
+    "Domino's",
+    "KFC",
+    "Subway",
+    "Starbucks",
+    "Costa Coffee",
+    "Lidl",
+    "Aldi",
+    "Carrefour",
+    "Tesco",
+    "Sainsbury's",
+    "ASDA",
+    "Morrisons",
+    "Waitrose",
+    "Coop",
+    "Spar",
+    "Restaurant",
+    "Café",
+    "Bakery",
+    "Butcher",
+    "Fishmonger"
+]
+keywords = [
+    "food",
+    "restaurant",
+    "cafe",
+    "coffee",
+    "pizza",
+    "burger",
+    "market",
+    "grocery",
+    "bakery",
+    "takeaway",
+    "delivery"
+]
+
+[categories.Transport]
+stores = [
+    "Gas Station",
+    "Petrol Station",
+    "Shell",
+    "BP",
+    "Esso",
+    "Texaco",
+    "Total",
+    "Uber",
+    "Bolt",
+    "Taxi",
+    "Bus Station",
+    "Train Station",
+    "Airport",
+    "Parking",
+    "Car Rental",
+    "Hertz",
+    "Avis",
+    "Enterprise"
+]
+keywords = [
+    "fuel",
+    "petrol",
+    "gas",
+    "parking",
+    "taxi",
+    "uber",
+    "transport",
+    "train",
+    "bus",
+    "flight",
+    "airline",
+    "rental"
+]
+
+[categories.Shopping]
+stores = [
+    "Amazon",
+    "eBay",
+    "Clothing Store",
+    "H&M",
+    "Zara",
+    "Uniqlo",
+    "Primark",
+    "Next",
+    "Marks & Spencer",
+    "John Lewis",
+    "IKEA",
+    "Argos",
+    "Currys",
+    "PC World",
+    "Apple Store",
+    "Electronics Store",
+    "Department Store",
+    "Shopping Mall",
+    "Outlet"
+]
+keywords = [
+    "shopping",
+    "clothes",
+    "electronics",
+    "online",
+    "store",
+    "mall",
+    "outlet",
+    "fashion",
+    "furniture",
+    "home"
+]
+
+[categories.Bills]
+stores = [
+    "Electricity Company",
+    "Gas Company",
+    "Water Company",
+    "Internet Provider",
+    "Phone Company",
+    "Insurance Company",
+    "Bank",
+    "Council",
+    "Tax Office",
+    "Rent",
+    "Mortgage",
+    "Vodafone",
+    "O2",
+    "EE",
+    "Three",
+    "BT",
+    "Virgin Media",
+    "Sky"
+]
+keywords = [
+    "bill",
+    "utility",
+    "electricity",
+    "gas",
+    "water",
+    "internet",
+    "phone",
+    "insurance",
+    "rent",
+    "mortgage",
+    "tax",
+    "council",
+    "subscription"
+]
+
+[categories.Fun]
+stores = [
+    "Cinema",
+    "Theatre",
+    "Concert Hall",
+    "Museum",
+    "Theme Park",
+    "Gym",
+    "Sports Club",
+    "Bar",
+    "Pub",
+    "Club",
+    "Netflix",
+    "Spotify",
+    "Gaming Store",
+    "Steam",
+    "PlayStation Store",
+    "Xbox Store",
+    "Bookstore",
+    "Library"
+]
+keywords = [
+    "entertainment",
+    "cinema",
+    "movie",
+    "theatre",
+    "concert",
+    "museum",
+    "gym",
+    "sports",
+    "bar",
+    "pub",
+    "club",
+    "game",
+    "gaming",
+    "book",
+    "hobby"
+]
+
+[categories.Health]
+stores = [
+    "Pharmacy",
+    "Boots",
+    "Superdrug",
+    "Hospital",
+    "Clinic",
+    "Doctor",
+    "Dentist",
+    "Optician",
+    "Vet",
+    "Health Store"
+]
+keywords = [
+    "health",
+    "medical",
+    "pharmacy",
+    "doctor",
+    "dentist",
+    "hospital",
+    "clinic",
+    "medicine",
+    "vitamins",
+    "supplements"
+]
+
+[categories.Other]
+stores = [
+    "Post Office",
+    "Bank",
+    "ATM",
+    "Government Office",
+    "Miscellaneous"
+]
+keywords = [
+    "other",
+    "misc",
+    "miscellaneous",
+    "unknown"
+] 

@@ -101,7 +101,7 @@ def main():
         st.plotly_chart(fig_treemap, use_container_width=True)
 
         # Bar chart of expenses over time
-        expenses_over_time = expenses_df.set_index('Date').resample('M')['Amount'].sum().reset_index()
+        expenses_over_time = expenses_df.set_index('Date').resample('MS')['Amount'].sum().reset_index()
         fig_time = px.bar(expenses_over_time, x='Date', y='Amount', title='Monthly Expenses')
         st.plotly_chart(fig_time, use_container_width=True)
     else:
@@ -118,8 +118,8 @@ def main():
     st.header("Income vs. Expenses")
     if not income_df.empty or not expenses_df.empty:
         # Combine data for comparison
-        income_summary = income_df.set_index('Date').resample('M')['Amount'].sum().rename('Income')
-        expenses_summary = expenses_df.set_index('Date').resample('M')['Amount'].sum().rename('Expenses')
+        income_summary = income_df.set_index('Date').resample('MS')['Amount'].sum().rename('Income')
+        expenses_summary = expenses_df.set_index('Date').resample('MS')['Amount'].sum().rename('Expenses')
         comparison_df = pd.concat([income_summary, expenses_summary], axis=1).fillna(0).reset_index()
         
         if not comparison_df.empty:

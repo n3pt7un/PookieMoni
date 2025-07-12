@@ -3,4 +3,5 @@ pandas
 plotly
 authlib
 st-gsheets-connection
+toml
 
