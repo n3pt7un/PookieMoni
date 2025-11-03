@@ -311,7 +311,7 @@ def account_balance_management():
         history_df.columns = ['Date', 'Balance', 'Notes']
         history_df['Balance'] = history_df['Balance'].apply(lambda x: f"{balance_info['currency']} {x:,.2f}")
         
-        st.dataframe(history_df, use_container_width=True)
+        st.dataframe(history_df, width='stretch')
     else:
         st.info("No balance history yet. Update your balance above to start tracking.")
 
@@ -363,7 +363,7 @@ def budget_planning():
                 })
         
         budget_df = pd.DataFrame(budget_data)
-        st.dataframe(budget_df, use_container_width=True, hide_index=True)
+        st.dataframe(budget_df, width='stretch', hide_index=True)
     else:
         st.info("No budgets configured.")
     
@@ -539,7 +539,7 @@ def category_management():
             })
         
         df = pd.DataFrame(category_data)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
     else:
         st.info("No categories found.")
     

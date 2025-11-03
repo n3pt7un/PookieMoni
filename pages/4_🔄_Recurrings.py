@@ -339,7 +339,7 @@ def analyze_recurrings(conn, current_user, user_name):
                 title="Monthly Recurrings by Category",
                 hole=0.4
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     
     # Analysis by frequency
     st.subheader("Spending by Frequency")
@@ -369,7 +369,7 @@ def analyze_recurrings(conn, current_user, user_name):
             upcoming_total = upcoming['Amount'].sum()
             st.metric("Total Due in Next 30 Days", f"€{upcoming_total:,.2f}")
             
-            st.dataframe(upcoming[['Name', 'Amount', 'Category', 'Next_Due']], use_container_width=True)
+            st.dataframe(upcoming[['Name', 'Amount', 'Category', 'Next_Due']], width='stretch')
         else:
             st.info("No expenses due in the next 30 days.")
 

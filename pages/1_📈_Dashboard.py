@@ -201,15 +201,19 @@ def main():
         return
 
     # --- Data Cleaning ---
-    if not expenses_df.empty:
+    if not expenses_df.empty and 'Amount' in expenses_df.columns and 'Date' in expenses_df.columns:
         expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'], errors='coerce')
         expenses_df['Date'] = pd.to_datetime(expenses_df['Date'], format='mixed', dayfirst=True, errors='coerce')
         expenses_df = expenses_df.dropna(subset=['Amount', 'Date'])
+    elif not expenses_df.empty:
+        expenses_df = pd.DataFrame()  # Reset if columns are missing
 
-    if not income_df.empty:
+    if not income_df.empty and 'Amount' in income_df.columns and 'Date' in income_df.columns:
         income_df['Amount'] = pd.to_numeric(income_df['Amount'], errors='coerce')
         income_df['Date'] = pd.to_datetime(income_df['Date'], format='mixed', dayfirst=True, errors='coerce')
         income_df = income_df.dropna(subset=['Amount', 'Date'])
+    elif not income_df.empty:
+        income_df = pd.DataFrame()  # Reset if columns are missing
     
     if not recurrings_df.empty and 'Amount' in recurrings_df.columns:
         recurrings_df['Amount'] = pd.to_numeric(recurrings_df['Amount'], errors='coerce')
@@ -379,7 +383,7 @@ def main():
                 showlegend=True,
                 height=300
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     else:
         st.info("No spending data available for this period.")
     
@@ -430,7 +434,7 @@ def main():
                 height=300
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     
     # --- RECURRING PAYMENTS ---
     st.markdown("<div class='section-header'>🔄 Recurring Payments</div>", unsafe_allow_html=True)

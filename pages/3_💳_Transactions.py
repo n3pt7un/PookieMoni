@@ -253,7 +253,7 @@ def edit_transactions(conn):
         df_display.insert(0, 'ID', range(len(df_display)))
         
         st.subheader(f"All {transaction_type}s")
-        st.dataframe(df_display, use_container_width=True)
+        st.dataframe(df_display, width='stretch')
         
         # Select transaction to edit
         st.subheader("Edit Transaction")
@@ -453,7 +453,7 @@ def bulk_delete_transactions(conn):
             
             # Show filtered transactions
             display_df = filtered_df.drop('Date_parsed', axis=1)
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width='stretch')
             
             # Confirmation
             st.subheader("Confirm Deletion")
@@ -577,7 +577,7 @@ def view_all_transactions(conn):
         
         # Display dataframe
         display_df = df.drop('Date_parsed', axis=1).reset_index(drop=True)
-        st.dataframe(display_df, use_container_width=True, height=400)
+        st.dataframe(display_df, width='stretch', height=400)
         
         # Export option
         if st.button("📥 Export to CSV"):
