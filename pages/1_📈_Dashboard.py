@@ -3,13 +3,20 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
-from datetime import datetime
+from datetime import datetime, timedelta
 from config_utils import (
     get_initial_balance,
     get_budgets,
     get_budget_settings,
-    calculate_budget_status,
-    get_current_period_dates
+    get_current_period_dates,
+    get_categories
+)
+from user_utils import (
+    get_current_user,
+    get_user_and_shared_data,
+    get_user_display_name,
+    render_user_selector,
+    get_worksheet_names
 )
 
 # --- Page Configuration ---
@@ -19,15 +26,145 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- Main Application ---
-def main():
-    st.title("📈 Financial Dashboard")
+# Custom CSS for Copilot Money-inspired design
+st.markdown("""
+<style>
+    /* Main container styling */
+    .main {
+        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+    }
+    
+    /* Card styling */
+    .metric-card {
+        background: linear-gradient(135deg, #1e2746 0%, #2a3454 100%);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        transition: transform 0.2s;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+    }
+    
+    /* Budget card colors */
+    .budget-on-track {
+        border-left: 4px solid #00e676;
+    }
+    
+    .budget-warning {
+        border-left: 4px solid #ffd600;
+    }
+    
+    .budget-alert {
+        border-left: 4px solid #ff5252;
+    }
+    
+    /* Typography */
+    .metric-title {
+        color: #9ca3af;
+        font-size: 14px;
+        font-weight: 500;
+        margin-bottom: 8px;
+    }
+    
+    .metric-value {
+        color: #ffffff;
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    
+    .metric-subtitle {
+        color: #6b7280;
+        font-size: 12px;
+    }
+    
+    /* Category chip */
+    .category-chip {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        margin: 4px;
+    }
+    
+    /* Spending status */
+    .spending-up {
+        color: #ff5252;
+    }
+    
+    .spending-down {
+        color: #00e676;
+    }
+    
+    .spending-neutral {
+        color: #ffd600;
+    }
+    
+    /* Section headers */
+    .section-header {
+        color: #ffffff;
+        font-size: 24px;
+        font-weight: 700;
+        margin: 32px 0 16px 0;
+    }
+    
+    /* User avatar */
+    .user-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 16px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
+def format_currency(amount: float) -> str:
+    """Format currency with proper symbol."""
+    return f"€{amount:,.2f}"
+
+def get_trend_indicator(current: float, previous: float) -> tuple:
+    """Get trend indicator (arrow and color)."""
+    if previous == 0:
+        return "→", "neutral"
+    
+    change_pct = ((current - previous) / abs(previous)) * 100
+    
+    if abs(change_pct) < 3:
+        return "=", "neutral"
+    elif change_pct > 0:
+        return f"↑ {abs(change_pct):.0f}%", "up"
+    else:
+        return f"↓ {abs(change_pct):.0f}%", "down"
+
+def main():
+    # Render user selector in sidebar
+    render_user_selector()
+    
+    current_user = get_current_user()
+    user_name = get_user_display_name(current_user)
+    
+    # Header with user info
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        st.markdown(f"# 👋 Welcome back, {user_name}!")
+        st.markdown(f"*{datetime.now().strftime('%A, %B %d, %Y')}*")
+    
     # Check if authentication is configured
     try:
         is_logged_in = st.user.is_logged_in
     except (AttributeError, KeyError):
-        # Authentication not configured, run in demo mode
         is_logged_in = True
     
     if not is_logged_in:
@@ -38,363 +175,370 @@ def main():
         conn = st.connection("gsheets", type=GSheetsConnection)
     except Exception as e:
         st.error(f"Failed to connect to Google Sheets: {e}")
-        st.info("Please ask the app owner to configure the Google Sheets connection.")
         return
 
     # --- Load Data ---
     try:
-        expenses_df = conn.read(worksheet="expenses_taras", ttl=0)
-        income_df = conn.read(worksheet="income_taras", ttl=0)
+        if current_user in ["user1", "user2"]:
+            expenses_df = get_user_and_shared_data(conn, current_user, "expenses")
+            income_df = get_user_and_shared_data(conn, current_user, "income")
+            try:
+                recurrings_df = get_user_and_shared_data(conn, current_user, "recurrings")
+            except:
+                recurrings_df = pd.DataFrame()
+        else:
+            # Shared view
+            worksheets = get_worksheet_names("shared")
+            expenses_df = conn.read(worksheet=worksheets["expenses"], ttl=0)
+            income_df = conn.read(worksheet=worksheets["income"], ttl=0)
+            try:
+                recurrings_df = conn.read(worksheet=worksheets["recurrings"], ttl=0)
+            except:
+                recurrings_df = pd.DataFrame()
     except Exception as e:
-        st.error(f"Could not load data from Google Sheets. Error: {e}")
-        st.info("Have you added any transactions yet from the main page?")
+        st.error(f"Could not load data: {e}")
+        st.info("Have you added any transactions yet?")
         return
-
 
     # --- Data Cleaning ---
     if not expenses_df.empty:
-        expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'])
-        # Handle multiple date formats: ISO (YYYY-MM-DD), dd-M-Y, or mixed formats
-        expenses_df['Date'] = pd.to_datetime(expenses_df['Date'], format='mixed', dayfirst=True)
+        expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'], errors='coerce')
+        expenses_df['Date'] = pd.to_datetime(expenses_df['Date'], format='mixed', dayfirst=True, errors='coerce')
+        expenses_df = expenses_df.dropna(subset=['Amount', 'Date'])
 
     if not income_df.empty:
-        income_df['Amount'] = pd.to_numeric(income_df['Amount'])
-        # Handle multiple date formats: ISO (YYYY-MM-DD), dd-M-Y, or mixed formats
-        income_df['Date'] = pd.to_datetime(income_df['Date'], format='mixed', dayfirst=True)
+        income_df['Amount'] = pd.to_numeric(income_df['Amount'], errors='coerce')
+        income_df['Date'] = pd.to_datetime(income_df['Date'], format='mixed', dayfirst=True, errors='coerce')
+        income_df = income_df.dropna(subset=['Amount', 'Date'])
+    
+    if not recurrings_df.empty and 'Amount' in recurrings_df.columns:
+        recurrings_df['Amount'] = pd.to_numeric(recurrings_df['Amount'], errors='coerce')
+        if 'Next_Due' in recurrings_df.columns:
+            recurrings_df['Next_Due'] = pd.to_datetime(recurrings_df['Next_Due'], format='mixed', dayfirst=True, errors='coerce')
 
     if expenses_df.empty and income_df.empty:
-        st.info("No transaction data found. Please add some from the main page.")
+        st.info("No transaction data found. Start by adding some transactions from the main page!")
         return
     
-    # --- Date Range Filter ---
-    st.header("Filter Data by Date")
-
-    min_date = min(expenses_df['Date'].min() if not expenses_df.empty else datetime.now(),
-                   income_df['Date'].min() if not income_df.empty else datetime.now()).date()
-    max_date = max(expenses_df['Date'].max() if not expenses_df.empty else datetime.now(),
-                   income_df['Date'].max() if not income_df.empty else datetime.now()).date()
-
-    if min_date > max_date:
-        min_date = max_date
-
-
-    start_date, end_date = st.date_input(
-        "Select a date range",
-        [min_date, max_date],
-        min_value=min_date,
-        max_value=max_date,
-    )
-
-    if start_date and end_date:
-        start_datetime = pd.to_datetime(start_date)
-        end_datetime = pd.to_datetime(end_date)
-        # Filter dataframes
-        expenses_df = expenses_df[(expenses_df['Date'] >= start_datetime) & (expenses_df['Date'] <= end_datetime)]
-        income_df = income_df[(income_df['Date'] >= start_datetime) & (income_df['Date'] <= end_datetime)]
-
-
-    # --- Key Metrics ---
-    st.header("Key Metrics")
+    # --- Calculate Key Metrics ---
+    current_period_start, current_period_end = get_current_period_dates("monthly")
     
-    # Get balance info
-    balance_info = get_initial_balance()
-    initial_balance = balance_info['balance']
-    currency = balance_info['currency']
+    # Filter to current period
+    period_expenses = expenses_df[
+        (expenses_df['Date'] >= current_period_start) & 
+        (expenses_df['Date'] <= current_period_end)
+    ] if not expenses_df.empty else pd.DataFrame()
     
-    total_income = income_df['Amount'].sum() if not income_df.empty else 0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0
-    net_savings = total_income - total_expenses
-    current_balance = initial_balance + net_savings
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Initial Balance", f"{currency} {initial_balance:,.2f}")
-    col2.metric("Total Income", f"{currency} {total_income:,.2f}")
-    col3.metric("Total Expenses", f"{currency} {total_expenses:,.2f}")
+    period_income = income_df[
+        (income_df['Date'] >= current_period_start) & 
+        (income_df['Date'] <= current_period_end)
+    ] if not income_df.empty else pd.DataFrame()
     
-    # Show current balance with delta
-    balance_delta = current_balance - initial_balance
-    col4.metric(
-        "Current Balance", 
-        f"{currency} {current_balance:,.2f}",
-        delta=f"{balance_delta:+,.2f}",
-        delta_color="normal"
-    )
+    # Previous period for comparison
+    prev_period_start = current_period_start - timedelta(days=30)
+    prev_period_end = current_period_start - timedelta(days=1)
     
-    # Visual progress indicator
-    if initial_balance != 0:
-        balance_change_pct = (balance_delta / abs(initial_balance)) * 100
-        st.progress(
-            min(max(balance_change_pct / 100, 0), 1),
-            text=f"Balance Change: {balance_delta:+,.2f} {currency} ({balance_change_pct:+.1f}%)"
-        )
-
-    # --- Budget Overview ---
-    st.header("📊 Budget Overview")
+    prev_expenses = expenses_df[
+        (expenses_df['Date'] >= prev_period_start) & 
+        (expenses_df['Date'] <= prev_period_end)
+    ] if not expenses_df.empty else pd.DataFrame()
     
+    total_spent = period_expenses['Amount'].sum() if not period_expenses.empty else 0
+    total_income = period_income['Amount'].sum() if not period_income.empty else 0
+    prev_spent = prev_expenses['Amount'].sum() if not prev_expenses.empty else 0
+    
+    # Budget calculations
     budgets = get_budgets()
-    budget_settings = get_budget_settings()
+    total_budgeted = sum(b.get('amount', 0) for b in budgets.values() if b.get('is_active', True))
+    budget_remaining = total_budgeted - total_spent
     
-    if budgets:
-        # Calculate spending by category for current period
-        if not expenses_df.empty:
-            # Get current period dates
-            current_period_start, current_period_end = get_current_period_dates("monthly")
-            
-            # Filter expenses to current period
-            period_expenses = expenses_df[
-                (expenses_df['Date'] >= current_period_start) & 
-                (expenses_df['Date'] <= current_period_end)
-            ]
-            
-            if not period_expenses.empty:
-                spending_by_category = period_expenses.groupby('Category')['Amount'].sum().to_dict()
-            else:
-                spending_by_category = {}
-        else:
-            spending_by_category = {}
+    # --- TOP METRICS ROW ---
+    st.markdown("---")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        budget_percentage = (total_spent / total_budgeted * 100) if total_budgeted > 0 else 0
+        status_class = "budget-on-track" if budget_percentage < 80 else ("budget-warning" if budget_percentage < 100 else "budget-alert")
         
-        # Overall budget status
-        total_budgeted = sum(b.get('amount', 0) for b in budgets.values() if b.get('is_active', True))
-        total_spent = sum(spending_by_category.values())
-        total_remaining = total_budgeted - total_spent
+        st.markdown(f"""
+        <div class="metric-card {status_class}">
+            <div class="metric-title">BUDGET</div>
+            <div class="metric-value">{format_currency(budget_remaining)}</div>
+            <div class="metric-subtitle">out of {format_currency(total_budgeted)} budgeted</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        spending_trend, trend_type = get_trend_indicator(total_spent, prev_spent)
         
-        if total_budgeted > 0:
-            overall_percentage = (total_spent / total_budgeted) * 100
-        else:
-            overall_percentage = 0
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">SPENDING</div>
+            <div class="metric-value">{format_currency(total_spent)}</div>
+            <div class="metric-subtitle spending-{trend_type}">{spending_trend} vs last month</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        recurrings_total = recurrings_df['Amount'].sum() if not recurrings_df.empty and 'Amount' in recurrings_df.columns else 0
+        recurrings_count = len(recurrings_df) if not recurrings_df.empty else 0
         
-        # Determine overall status
-        if overall_percentage >= budget_settings['alert_threshold']:
-            overall_status = "🔴"
-            status_text = "Over Budget"
-        elif overall_percentage >= budget_settings['warning_threshold']:
-            overall_status = "🟡"
-            status_text = "Warning"
-        else:
-            overall_status = "🟢"
-            status_text = "On Track"
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">RECURRINGS</div>
+            <div class="metric-value">{format_currency(recurrings_total)}</div>
+            <div class="metric-subtitle">{recurrings_count} active subscriptions</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        net_income = total_income - total_spent
         
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Budgeted", f"€{total_budgeted:,.2f}")
-        col2.metric("Total Spent", f"€{total_spent:,.2f}")
-        col3.metric("Remaining", f"€{total_remaining:,.2f}")
-        col4.metric("Status", f"{overall_status} {status_text}", f"{overall_percentage:.1f}%")
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">NET INCOME</div>
+            <div class="metric-value">{format_currency(net_income)}</div>
+            <div class="metric-subtitle">this month</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # --- SPENDING BREAKDOWN ---
+    st.markdown("<div class='section-header'>💰 Spending Breakdown</div>", unsafe_allow_html=True)
+    
+    if not period_expenses.empty and 'Category' in period_expenses.columns:
+        spending_by_category = period_expenses.groupby('Category')['Amount'].sum().sort_values(ascending=False)
         
-        # Budget progress bars by category
-        st.subheader("Budget Progress by Category")
+        # Create two columns for spending breakdown
+        col1, col2 = st.columns([2, 1])
         
-        # Create columns for budget cards
-        num_budgets = len(budgets)
-        cols_per_row = 2
-        
-        budget_items = list(budgets.items())
-        for i in range(0, num_budgets, cols_per_row):
-            cols = st.columns(cols_per_row)
-            
-            for j, col in enumerate(cols):
-                if i + j < num_budgets:
-                    category, budget = budget_items[i + j]
-                    
-                    with col:
-                        spent = spending_by_category.get(category, 0)
-                        budget_amount = budget.get('amount', 0)
-                        
-                        if budget_amount > 0:
-                            percentage = (spent / budget_amount) * 100
-                        else:
-                            percentage = 0
-                        
-                        remaining = budget_amount - spent
-                        
-                        # Determine color based on percentage
-                        if percentage >= budget_settings['alert_threshold']:
-                            status_emoji = "🔴"
-                            progress_color = "red"
-                        elif percentage >= budget_settings['warning_threshold']:
-                            status_emoji = "🟡"
-                            progress_color = "orange"
-                        else:
-                            status_emoji = "🟢"
-                            progress_color = "green"
-                        
-                        # Display budget card
-                        st.markdown(f"**{status_emoji} {category}**")
-                        st.progress(min(percentage / 100, 1.0))
-                        st.caption(f"€{spent:,.2f} / €{budget_amount:,.2f} ({percentage:.1f}%)")
-                        
-                        if remaining >= 0:
-                            st.caption(f"€{remaining:,.2f} remaining")
-                        else:
-                            st.caption(f"⚠️ €{abs(remaining):,.2f} over budget!")
-        
-        # Budget vs Actual Comparison Chart
-        st.subheader("Budget vs. Actual Spending")
-        
-        comparison_data = []
-        for category, budget in budgets.items():
-            if budget.get('is_active', True):
-                spent = spending_by_category.get(category, 0)
-                budget_amount = budget.get('amount', 0)
+        with col1:
+            # Category breakdown with progress bars
+            for category in spending_by_category.index[:8]:  # Top 8 categories
+                amount = spending_by_category[category]
+                percentage = (amount / total_spent * 100) if total_spent > 0 else 0
                 
-                comparison_data.append({
-                    'Category': category,
-                    'Budgeted': budget_amount,
-                    'Actual': spent
-                })
+                # Get budget for category if exists
+                category_budget = budgets.get(category, {}).get('amount', 0)
+                budget_pct = (amount / category_budget * 100) if category_budget > 0 else 0
+                
+                # Determine color based on budget
+                if category_budget > 0:
+                    if budget_pct >= 100:
+                        bar_color = "#ff5252"
+                        status_emoji = "🔴"
+                    elif budget_pct >= 80:
+                        bar_color = "#ffd600"
+                        status_emoji = "🟡"
+                    else:
+                        bar_color = "#00e676"
+                        status_emoji = "🟢"
+                else:
+                    bar_color = "#3b82f6"
+                    status_emoji = "🔵"
+                
+                # Calculate trend vs previous period
+                if not prev_expenses.empty and 'Category' in prev_expenses.columns:
+                    prev_cat_amount = prev_expenses[prev_expenses['Category'] == category]['Amount'].sum()
+                    trend, trend_type = get_trend_indicator(amount, prev_cat_amount)
+                else:
+                    trend = "→"
+                    trend_type = "neutral"
+                
+                col_a, col_b, col_c = st.columns([3, 1, 1])
+                
+                with col_a:
+                    st.markdown(f"**{status_emoji} {category}**")
+                    st.progress(min(percentage / 100, 1.0))
+                
+                with col_b:
+                    st.markdown(f"**{format_currency(amount)}**")
+                    st.caption(f"{percentage:.1f}% of spending")
+                
+                with col_c:
+                    if category_budget > 0:
+                        st.markdown(f"**{budget_pct:.0f}%**")
+                        st.caption(f"of {format_currency(category_budget)}")
+                    else:
+                        st.markdown(f"**{trend}**")
+                        st.caption("vs last month")
         
-        if comparison_data:
-            comparison_df = pd.DataFrame(comparison_data)
+        with col2:
+            # Pie chart
+            fig = px.pie(
+                values=spending_by_category.values[:5],
+                names=spending_by_category.index[:5],
+                title="Top 5 Categories",
+                hole=0.4,
+                color_discrete_sequence=px.colors.sequential.Blues_r
+            )
+            fig.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='white'),
+                showlegend=True,
+                height=300
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No spending data available for this period.")
+    
+    # --- SPENDING TREND ---
+    st.markdown("<div class='section-header'>📊 Spending Trend</div>", unsafe_allow_html=True)
+    
+    if not expenses_df.empty:
+        # Get last 6 months of data
+        six_months_ago = datetime.now() - timedelta(days=180)
+        recent_expenses = expenses_df[expenses_df['Date'] >= six_months_ago]
+        
+        if not recent_expenses.empty:
+            # Group by month
+            monthly_spending = recent_expenses.set_index('Date').resample('MS')['Amount'].sum().reset_index()
+            monthly_spending['Month'] = monthly_spending['Date'].dt.strftime('%b %Y')
             
+            # Create line chart
             fig = go.Figure()
-            fig.add_trace(go.Bar(
-                name='Budgeted',
-                x=comparison_df['Category'],
-                y=comparison_df['Budgeted'],
-                marker_color='lightblue'
+            
+            fig.add_trace(go.Scatter(
+                x=monthly_spending['Month'],
+                y=monthly_spending['Amount'],
+                mode='lines+markers',
+                name='Spending',
+                line=dict(color='#3b82f6', width=3),
+                marker=dict(size=8, color='#3b82f6'),
+                fill='tozeroy',
+                fillcolor='rgba(59, 130, 246, 0.1)'
             ))
-            fig.add_trace(go.Bar(
-                name='Actual',
-                x=comparison_df['Category'],
-                y=comparison_df['Actual'],
-                marker_color='salmon'
-            ))
+            
+            # Add budget line if available
+            if total_budgeted > 0:
+                fig.add_hline(
+                    y=total_budgeted,
+                    line_dash="dash",
+                    line_color="#ffd600",
+                    annotation_text="Budget",
+                    annotation_position="right"
+                )
             
             fig.update_layout(
-                barmode='group',
-                title='Budget vs. Actual by Category',
-                xaxis_title='Category',
-                yaxis_title='Amount (€)',
-                hovermode='x unified'
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='white'),
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                hovermode='x unified',
+                height=300
             )
             
             st.plotly_chart(fig, use_container_width=True)
+    
+    # --- RECURRING PAYMENTS ---
+    st.markdown("<div class='section-header'>🔄 Recurring Payments</div>", unsafe_allow_html=True)
+    
+    if not recurrings_df.empty:
+        col1, col2 = st.columns([2, 1])
         
-        # Spending rate analysis
-        st.subheader("Spending Rate Analysis")
-        
-        # Calculate days into the month
-        now = datetime.now()
-        current_period_start, current_period_end = get_current_period_dates("monthly")
-        
-        days_in_period = (current_period_end - current_period_start).days + 1
-        days_elapsed = (now - current_period_start).days + 1
-        period_progress = (days_elapsed / days_in_period) * 100
-        
-        if total_budgeted > 0:
-            spending_rate = (total_spent / total_budgeted) * 100
+        with col1:
+            st.markdown("### Active Subscriptions")
             
-            if spending_rate > period_progress + 10:
-                pace_status = "⚠️ Spending faster than expected"
-                pace_color = "red"
-            elif spending_rate < period_progress - 10:
-                pace_status = "✅ Spending slower than expected"
-                pace_color = "green"
-            else:
-                pace_status = "➡️ Spending on pace"
-                pace_color = "blue"
+            # Sort by next due date
+            if 'Next_Due' in recurrings_df.columns:
+                recurrings_df = recurrings_df.sort_values('Next_Due')
             
-            # Project end of period spending
-            if days_elapsed > 0:
-                projected_total = (total_spent / days_elapsed) * days_in_period
-                projected_over = projected_total - total_budgeted
-            else:
-                projected_total = 0
-                projected_over = 0
+            for idx, row in recurrings_df.head(8).iterrows():
+                name = row.get('Name', 'Unknown')
+                amount = row.get('Amount', 0)
+                frequency = row.get('Frequency', 'Monthly')
+                next_due = row.get('Next_Due', None)
+                
+                col_a, col_b, col_c = st.columns([2, 1, 1])
+                
+                with col_a:
+                    st.markdown(f"**{name}**")
+                    st.caption(f"{frequency}")
+                
+                with col_b:
+                    st.markdown(f"**{format_currency(amount)}**")
+                
+                with col_c:
+                    if pd.notna(next_due):
+                        days_until = (next_due - datetime.now()).days
+                        if days_until < 0:
+                            st.markdown(f"🔴 **Overdue**")
+                        elif days_until <= 3:
+                            st.markdown(f"🟡 **{days_until}d**")
+                        else:
+                            st.markdown(f"🟢 **{days_until}d**")
+                    else:
+                        st.markdown("—")
+        
+        with col2:
+            # Summary box
+            st.markdown("### Summary")
+            st.metric("Total Monthly", format_currency(recurrings_total))
+            st.metric("Active Count", recurrings_count)
             
-            col1, col2, col3 = st.columns(3)
+            if not recurrings_df.empty and 'Next_Due' in recurrings_df.columns:
+                upcoming = recurrings_df[
+                    (pd.notna(recurrings_df['Next_Due'])) &
+                    (recurrings_df['Next_Due'] <= datetime.now() + timedelta(days=7))
+                ]
+                st.metric("Due This Week", len(upcoming))
+    else:
+        st.info("No recurring payments configured. Add them in Settings to track subscriptions!")
+    
+    # --- TRANSACTION RULES ---
+    st.markdown("<div class='section-header'>🏷️ Transaction Rules</div>", unsafe_allow_html=True)
+    
+    categories = get_categories()
+    
+    col1, col2, col3 = st.columns(3)
+    
+    rule_examples = [
+        ("Food & Dining", "🍕", ["pizza", "restaurant", "cafe"]),
+        ("Transportation", "🚗", ["uber", "gas", "parking"]),
+        ("Shopping", "🛍️", ["amazon", "store", "mall"]),
+        ("Bills & Utilities", "💡", ["electric", "water", "internet"]),
+        ("Entertainment", "🎬", ["netflix", "spotify", "cinema"]),
+        ("Health", "🏥", ["pharmacy", "hospital", "doctor"])
+    ]
+    
+    for idx, (category, emoji, keywords) in enumerate(rule_examples[:6]):
+        col = [col1, col2, col3][idx % 3]
+        
+        with col:
+            st.markdown(f"**{emoji} {category}**")
+            keywords_str = " • ".join([f"`{kw}`" for kw in keywords[:3]])
+            st.caption(keywords_str)
+    
+    # --- RECENT TRANSACTIONS ---
+    st.markdown("<div class='section-header'>📝 Recent Transactions</div>", unsafe_allow_html=True)
+    
+    if not period_expenses.empty:
+        recent = period_expenses.sort_values('Date', ascending=False).head(10)
+        
+        # Display in a clean format
+        for idx, row in recent.iterrows():
+            date = row['Date'].strftime('%b %d')
+            store = row.get('Store', 'Unknown')
+            category = row.get('Category', 'Other')
+            amount = row['Amount']
+            source = row.get('_source', 'personal')
+            
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
             
             with col1:
-                st.metric(
-                    "Period Progress",
-                    f"Day {days_elapsed} of {days_in_period}",
-                    f"{period_progress:.1f}%"
-                )
+                st.markdown(f"**{store}**")
             
             with col2:
-                st.metric(
-                    "Spending Rate",
-                    f"{spending_rate:.1f}%",
-                    pace_status
-                )
+                st.caption(f"{category}")
             
             with col3:
-                if projected_over > 0:
-                    st.metric(
-                        "Projected Month-End",
-                        f"€{projected_total:,.2f}",
-                        f"€{projected_over:+,.2f} over",
-                        delta_color="inverse"
-                    )
-                else:
-                    st.metric(
-                        "Projected Month-End",
-                        f"€{projected_total:,.2f}",
-                        f"€{abs(projected_over):,.2f} under",
-                        delta_color="normal"
-                    )
+                st.markdown(f"**{format_currency(amount)}**")
             
-            # Tips based on spending
-            if spending_rate > period_progress + 10:
-                # Find categories that are over budget
-                over_categories = []
-                for category, budget in budgets.items():
-                    spent = spending_by_category.get(category, 0)
-                    budget_amount = budget.get('amount', 0)
-                    if budget_amount > 0 and (spent / budget_amount) > 1.0:
-                        over_categories.append(category)
-                
-                if over_categories:
-                    st.warning(f"💡 **Tip**: Consider reducing spending in: {', '.join(over_categories)}")
-    else:
-        st.info("No budgets configured. Visit the ⚙️ Settings page to set up your budgets!")
-
-    # --- Visualizations ---
-    st.header("Expenses Analysis")
-    if not expenses_df.empty:
-        # Pie chart of expenses by category
-        fig_cat = px.pie(expenses_df, names='Category', values='Amount', title='Expenses by Category')
-        st.plotly_chart(fig_cat, use_container_width=True)
-
-        # Treemap of expenses
-        fig_treemap = px.treemap(expenses_df, path=['Category', 'Store'], values='Amount', title='Expenses Breakdown')
-        st.plotly_chart(fig_treemap, use_container_width=True)
-
-        # Bar chart of expenses over time
-        expenses_over_time = expenses_df.set_index('Date').resample('MS')['Amount'].sum().reset_index()
-        fig_time = px.bar(expenses_over_time, x='Date', y='Amount', title='Monthly Expenses')
-        st.plotly_chart(fig_time, use_container_width=True)
-    else:
-        st.info("No expense data to display for the selected range.")
-
-    st.header("Income Analysis")
-    if not income_df.empty:
-        # Pie chart of income by source
-        fig_source = px.pie(income_df, names='Source', values='Amount', title='Income by Source')
-        st.plotly_chart(fig_source, use_container_width=True)
-    else:
-        st.info("No income data to display for the selected range.")
-        
-    st.header("Income vs. Expenses")
-    if not income_df.empty or not expenses_df.empty:
-        # Combine data for comparison
-        income_summary = income_df.set_index('Date').resample('MS')['Amount'].sum().rename('Income')
-        expenses_summary = expenses_df.set_index('Date').resample('MS')['Amount'].sum().rename('Expenses')
-        comparison_df = pd.concat([income_summary, expenses_summary], axis=1).fillna(0).reset_index()
-        
-        if not comparison_df.empty:
-            fig_comparison = px.bar(comparison_df, x='Date', y=['Income', 'Expenses'], barmode='group', title='Monthly Income vs. Expenses')
-            st.plotly_chart(fig_comparison, use_container_width=True)
-        else:
-            st.info("No data for income vs. expenses comparison in the selected range.")
-    else:
-        st.info("Insufficient data for income vs. expenses comparison.")
-
-    # --- Detailed Transactions ---
-    st.header("Recent Transactions")
-    if not expenses_df.empty:
-        st.dataframe(expenses_df.sort_values('Date', ascending=False).head(10))
-    else:
-        st.write("No recent expenses in the selected date range.")
+            with col4:
+                badge = "🤝 Shared" if source == 'shared' else "👤 Personal"
+                st.caption(badge)
 
 if __name__ == "__main__":
-    main() 
+    main()

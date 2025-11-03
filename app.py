@@ -12,6 +12,13 @@ from config_utils import (
     calculate_budget_status,
     get_current_period_dates
 )
+from user_utils import (
+    get_current_user,
+    get_user_display_name,
+    render_user_selector,
+    get_worksheet_names,
+    get_user_and_shared_data
+)
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -104,6 +111,12 @@ def main():
         login_screen()
         return
 
+    # Render user selector
+    render_user_selector()
+    
+    current_user = get_current_user()
+    active_user_name = get_user_display_name(current_user)
+
     # Show welcome message
     if user_name != "Demo User":
         st.sidebar.success(f"Welcome, {user_name}!")
@@ -114,7 +127,7 @@ def main():
     
     # Balance overview in sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💰 Account Overview")
+    st.sidebar.markdown(f"### 💰 {active_user_name}'s Overview")
     
     try:
         balance_info = get_initial_balance()
@@ -124,8 +137,14 @@ def main():
         # Get total income and expenses
         conn = st.connection("gsheets", type=GSheetsConnection)
         try:
-            expenses_df = conn.read(worksheet="expenses_taras", ttl=0)
-            income_df = conn.read(worksheet="income_taras", ttl=0)
+            # Load data based on current user
+            if current_user in ["user1", "user2"]:
+                expenses_df = get_user_and_shared_data(conn, current_user, "expenses")
+                income_df = get_user_and_shared_data(conn, current_user, "income")
+            else:
+                worksheets = get_worksheet_names("shared")
+                expenses_df = conn.read(worksheet=worksheets["expenses"], ttl=0)
+                income_df = conn.read(worksheet=worksheets["income"], ttl=0)
             
             if not expenses_df.empty:
                 expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'])
@@ -165,9 +184,24 @@ def main():
         return
     
     # --- Transaction Entry ---
-    st.header("Add a New Transaction")
+    st.header(f"Add a New Transaction for {active_user_name}")
     
     st.info("💡 **Tip**: Visit the ⚙️ **Settings** page to manage categories, add stores, and configure auto-categorization keywords!")
+    
+    # Show info about current user
+    if current_user in ["user1", "user2"]:
+        st.caption(f"📊 You can add transactions to your personal account or shared account.")
+    
+    # Option to choose between personal and shared (for user1 and user2)
+    if current_user in ["user1", "user2"]:
+        transaction_scope = st.radio(
+            "Add to:",
+            ["Personal", "Shared"],
+            horizontal=True,
+            help="Personal transactions are only visible to you. Shared transactions are visible to both users."
+        )
+    else:
+        transaction_scope = "Shared"
     
     transaction_type = st.selectbox("Transaction Type", ["Expense", "Income"])
 
@@ -230,12 +264,21 @@ def main():
                             }
                         ]
                     )
+                    
+                    # Determine worksheet based on scope
+                    if transaction_scope == "Shared":
+                        worksheets = get_worksheet_names("shared")
+                        worksheet_name = worksheets["expenses"]
+                    else:
+                        worksheets = get_worksheet_names(current_user)
+                        worksheet_name = worksheets["expenses"]
+                    
                     try:
                         # Read existing data and append the new row
-                        existing_data = conn.read(worksheet="expenses_taras", ttl=0)
+                        existing_data = conn.read(worksheet=worksheet_name, ttl=0)
                         updated_df = pd.concat([existing_data, expense_df], ignore_index=True)
-                        conn.update(worksheet="expenses_taras", data=updated_df)
-                        st.success("✅ Expense added successfully!")
+                        conn.update(worksheet=worksheet_name, data=updated_df)
+                        st.success(f"✅ Expense added successfully to {transaction_scope} account!")
                         if store not in all_stores:
                             st.info(f"Added '{store}' to {category} category for future use.")
                         
@@ -245,9 +288,9 @@ def main():
                         # If the sheet doesn't exist, conn.read will fail.
                         # In this case, we create the sheet with the new data.
                         if "gspread.exceptions.WorksheetNotFound" in str(e):
-                            st.warning("Worksheet 'expenses_taras' not found. A new one will be created.")
-                            conn.update(worksheet="expenses_taras", data=expense_df)
-                            st.success("Expense added successfully!")
+                            st.warning(f"Worksheet '{worksheet_name}' not found. A new one will be created.")
+                            conn.update(worksheet=worksheet_name, data=expense_df)
+                            st.success(f"Expense added successfully to {transaction_scope} account!")
                             if store not in all_stores:
                                 st.info(f"Added '{store}' to {category} category for future use.")
                         else:
@@ -273,31 +316,55 @@ def main():
                         }
                     ]
                 )
+                
+                # Determine worksheet based on scope
+                if transaction_scope == "Shared":
+                    worksheets = get_worksheet_names("shared")
+                    worksheet_name = worksheets["income"]
+                else:
+                    worksheets = get_worksheet_names(current_user)
+                    worksheet_name = worksheets["income"]
+                
                 try:
                     # Read existing data and append the new row
-                    existing_data = conn.read(worksheet="income_taras", ttl=0)
+                    existing_data = conn.read(worksheet=worksheet_name, ttl=0)
                     updated_df = pd.concat([existing_data, income_df], ignore_index=True)
-                    conn.update(worksheet="income_taras", data=updated_df)
-                    st.success("Income added successfully!")
+                    conn.update(worksheet=worksheet_name, data=updated_df)
+                    st.success(f"✅ Income added successfully to {transaction_scope} account!")
                 except Exception as e:
                      # If the sheet doesn't exist, conn.read will fail.
                     # In this case, we create the sheet with the new data.
                     if "gspread.exceptions.WorksheetNotFound" in str(e):
-                        st.warning("Worksheet 'income_taras' not found. A new one will be created.")
-                        conn.update(worksheet="income_taras", data=income_df)
-                        st.success("Income added successfully!")
+                        st.warning(f"Worksheet '{worksheet_name}' not found. A new one will be created.")
+                        conn.update(worksheet=worksheet_name, data=income_df)
+                        st.success(f"Income added successfully to {transaction_scope} account!")
                     else:
                         st.error(f"An error occurred: {e}")
 
     # --- Display Recent Transactions ---
-    st.header("Recent Transactions")
+    st.header(f"Recent {transaction_type}s for {active_user_name}")
     try:
-        if transaction_type == "Expense":
-            df = conn.read(worksheet="expenses_taras", ttl=0)
-            st.dataframe(df.tail())
+        if current_user in ["user1", "user2"]:
+            if transaction_type == "Expense":
+                df = get_user_and_shared_data(conn, current_user, "expenses")
+            else:
+                df = get_user_and_shared_data(conn, current_user, "income")
         else:
-            df = conn.read(worksheet="income_taras", ttl=0)
-            st.dataframe(df.tail())
+            worksheets = get_worksheet_names("shared")
+            if transaction_type == "Expense":
+                df = conn.read(worksheet=worksheets["expenses"], ttl=0)
+            else:
+                df = conn.read(worksheet=worksheets["income"], ttl=0)
+        
+        if not df.empty:
+            # Sort by most recent if Date column exists
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'], format='mixed', dayfirst=True, errors='coerce')
+                df = df.sort_values('Date', ascending=False)
+            
+            st.dataframe(df.head(10))
+        else:
+            st.info("No recent transactions found.")
     except Exception as e:
         st.error(f"Could not load recent transactions. Have you added any yet? Error: {e}")
 
