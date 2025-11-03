@@ -1,27 +1,102 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 from config_utils import (
+    get_categories, 
+    get_all_stores, 
+    auto_categorize_store, 
+    add_store_to_category,
     get_initial_balance,
     get_budgets,
-    get_budget_settings,
     calculate_budget_status,
     get_current_period_dates
+)
+from user_utils import (
+    get_current_user,
+    get_user_display_name,
+    render_user_selector,
+    get_worksheet_names,
+    get_user_and_shared_data
 )
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="PookieMoni - Personal Finance Tracker",
+    page_title="Personal Finance Tracker",
     page_icon="💰",
-    layout="wide",
+    layout="centered",
 )
+
+# --- Google Sheets Connection ---
+def login_screen():
+    st.header("This app is private.")
+    st.subheader("Please log in.")
+    st.button("Log in with Google", on_click=st.login)
+
+def show_budget_alert(category: str, new_amount: float, conn):
+    """
+    Show budget alert for a category after adding an expense.
+    
+    Args:
+        category: Category of the expense
+        new_amount: Amount of the new expense
+        conn: Google Sheets connection
+    """
+    budgets = get_budgets()
+    
+    if category not in budgets:
+        return
+    
+    budget = budgets[category]
+    if not budget.get('is_active', True):
+        return
+    
+    budget_amount = budget.get('amount', 0)
+    
+    # Get current period spending
+    try:
+        current_period_start, current_period_end = get_current_period_dates(budget.get('period', 'monthly'))
+        expenses_df = conn.read(worksheet="expenses_taras", ttl=0)
+        
+        if not expenses_df.empty:
+            expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'])
+            expenses_df['Date'] = pd.to_datetime(expenses_df['Date'], format='mixed', dayfirst=True)
+            
+            # Filter by category and period
+            period_category_expenses = expenses_df[
+                (expenses_df['Category'] == category) &
+                (expenses_df['Date'] >= current_period_start) &
+                (expenses_df['Date'] <= current_period_end)
+            ]
+            
+            total_spent = period_category_expenses['Amount'].sum()
+        else:
+            total_spent = new_amount
+    except Exception:
+        total_spent = new_amount
+    
+    if budget_amount > 0:
+        percentage = (total_spent / budget_amount) * 100
+        remaining = budget_amount - total_spent
+        
+        # Get budget settings for thresholds
+        from config_utils import get_budget_settings
+        settings = get_budget_settings()
+        
+        # Show appropriate alert based on percentage
+        if percentage >= settings['alert_threshold']:
+            if remaining < 0:
+                st.error(f"🔴 **Budget Alert**: You're €{abs(remaining):,.2f} over your {category} budget! ({percentage:.1f}% of budget used)")
+            else:
+                st.error(f"🔴 **Budget Alert**: You've reached {percentage:.1f}% of your {category} budget!")
+        elif percentage >= settings['warning_threshold']:
+            st.warning(f"🟡 **Budget Warning**: You've used €{total_spent:,.2f} / €{budget_amount:,.2f} ({percentage:.1f}%) of your {category} budget. €{remaining:,.2f} remaining.")
+        else:
+            st.info(f"ℹ️ **Budget Impact**: You've used €{total_spent:,.2f} / €{budget_amount:,.2f} ({percentage:.1f}%) of your {category} budget. €{remaining:,.2f} remaining. You're on track! 🟢")
 
 # --- Main Application ---
 def main():
-    st.title("💰 PookieMoni - Financial Dashboard")
+    st.title("💰 Personal Finance Tracker")
 
     # Check if authentication is configured
     try:
@@ -33,11 +108,15 @@ def main():
         user_name = "Demo User"
     
     if not is_logged_in:
-        st.header("This app is private.")
-        st.subheader("Please log in.")
-        st.button("Log in with Google", on_click=st.login)
+        login_screen()
         return
+
+    # Render user selector
+    render_user_selector()
     
+    current_user = get_current_user()
+    active_user_name = get_user_display_name(current_user)
+
     # Show welcome message
     if user_name != "Demo User":
         st.sidebar.success(f"Welcome, {user_name}!")
@@ -48,7 +127,7 @@ def main():
     
     # Balance overview in sidebar
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 💰 Account Overview")
+    st.sidebar.markdown(f"### 💰 {active_user_name}'s Overview")
     
     try:
         balance_info = get_initial_balance()
@@ -56,10 +135,16 @@ def main():
         initial_balance = balance_info['balance']
         
         # Get total income and expenses
+        conn = st.connection("gsheets", type=GSheetsConnection)
         try:
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            expenses_df = conn.read(worksheet="expenses_taras", ttl=0)
-            income_df = conn.read(worksheet="income_taras", ttl=0)
+            # Load data based on current user
+            if current_user in ["user1", "user2"]:
+                expenses_df = get_user_and_shared_data(conn, current_user, "expenses")
+                income_df = get_user_and_shared_data(conn, current_user, "income")
+            else:
+                worksheets = get_worksheet_names("shared")
+                expenses_df = conn.read(worksheet=worksheets["expenses"], ttl=0)
+                income_df = conn.read(worksheet=worksheets["income"], ttl=0)
             
             if not expenses_df.empty:
                 expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'])
@@ -79,16 +164,16 @@ def main():
             
         except Exception:
             st.sidebar.metric("Initial Balance", f"{currency} {initial_balance:,.2f}")
-            st.sidebar.caption("Configure Google Sheets to see current balance")
+            st.sidebar.caption("Connect to see current balance")
     except Exception:
         pass
     
     # Navigation info
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📍 Navigation")
-    st.sidebar.markdown("- **💳 Transactions**: Add, edit & manage transactions")
+    st.sidebar.markdown("- **📈 Dashboard**: View your financial analytics")
     st.sidebar.markdown("- **📤 Upload CSV**: Import bank transactions")
-    st.sidebar.markdown("- **⚙️ Settings**: Configure categories & budgets")
+    st.sidebar.markdown("- **⚙️ Settings**: Configure categories & stores")
     st.sidebar.markdown("---")
 
     try:
@@ -97,362 +182,192 @@ def main():
         st.error(f"Failed to connect to Google Sheets: {e}")
         st.info("Please ask the app owner to configure the Google Sheets connection.")
         return
-
-    # --- Load Data ---
-    try:
-        expenses_df = conn.read(worksheet="expenses_taras", ttl=0)
-        income_df = conn.read(worksheet="income_taras", ttl=0)
-    except Exception as e:
-        st.error(f"Could not load data from Google Sheets. Error: {e}")
-        st.info("Have you added any transactions yet? Go to **💳 Transactions** page to add some!")
-        st.info("📝 **Tip**: Configure your Google Sheets connection in **⚙️ Settings** → Google Sheets tab")
-        return
-
-
-    # --- Data Cleaning ---
-    if not expenses_df.empty:
-        expenses_df['Amount'] = pd.to_numeric(expenses_df['Amount'])
-        # Handle multiple date formats: ISO (YYYY-MM-DD), dd-M-Y, or mixed formats
-        expenses_df['Date'] = pd.to_datetime(expenses_df['Date'], format='mixed', dayfirst=True)
-
-    if not income_df.empty:
-        income_df['Amount'] = pd.to_numeric(income_df['Amount'])
-        # Handle multiple date formats: ISO (YYYY-MM-DD), dd-M-Y, or mixed formats
-        income_df['Date'] = pd.to_datetime(income_df['Date'], format='mixed', dayfirst=True)
-
-    if expenses_df.empty and income_df.empty:
-        st.info("No transaction data found. Please add some from the main page.")
-        return
     
-    # --- Date Range Filter ---
-    st.header("Filter Data by Date")
-
-    min_date = min(expenses_df['Date'].min() if not expenses_df.empty else datetime.now(),
-                   income_df['Date'].min() if not income_df.empty else datetime.now()).date()
-    max_date = max(expenses_df['Date'].max() if not expenses_df.empty else datetime.now(),
-                   income_df['Date'].max() if not income_df.empty else datetime.now()).date()
-
-    if min_date > max_date:
-        min_date = max_date
-
-
-    start_date, end_date = st.date_input(
-        "Select a date range",
-        [min_date, max_date],
-        min_value=min_date,
-        max_value=max_date,
-    )
-
-    if start_date and end_date:
-        start_datetime = pd.to_datetime(start_date)
-        end_datetime = pd.to_datetime(end_date)
-        # Filter dataframes
-        expenses_df = expenses_df[(expenses_df['Date'] >= start_datetime) & (expenses_df['Date'] <= end_datetime)]
-        income_df = income_df[(income_df['Date'] >= start_datetime) & (income_df['Date'] <= end_datetime)]
-
-
-    # --- Key Metrics ---
-    st.header("Key Metrics")
+    # --- Transaction Entry ---
+    st.header(f"Add a New Transaction for {active_user_name}")
     
-    # Get balance info
-    balance_info = get_initial_balance()
-    initial_balance = balance_info['balance']
-    currency = balance_info['currency']
+    st.info("💡 **Tip**: Visit the ⚙️ **Settings** page to manage categories, add stores, and configure auto-categorization keywords!")
     
-    total_income = income_df['Amount'].sum() if not income_df.empty else 0
-    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0
-    net_savings = total_income - total_expenses
-    current_balance = initial_balance + net_savings
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Initial Balance", f"{currency} {initial_balance:,.2f}")
-    col2.metric("Total Income", f"{currency} {total_income:,.2f}")
-    col3.metric("Total Expenses", f"{currency} {total_expenses:,.2f}")
+    # Show info about current user
+    if current_user in ["user1", "user2"]:
+        st.caption(f"📊 You can add transactions to your personal account or shared account.")
     
-    # Show current balance with delta
-    balance_delta = current_balance - initial_balance
-    col4.metric(
-        "Current Balance", 
-        f"{currency} {current_balance:,.2f}",
-        delta=f"{balance_delta:+,.2f}",
-        delta_color="normal"
-    )
-    
-    # Visual progress indicator
-    if initial_balance != 0:
-        balance_change_pct = (balance_delta / abs(initial_balance)) * 100
-        st.progress(
-            min(max(balance_change_pct / 100, 0), 1),
-            text=f"Balance Change: {balance_delta:+,.2f} {currency} ({balance_change_pct:+.1f}%)"
+    # Option to choose between personal and shared (for user1 and user2)
+    if current_user in ["user1", "user2"]:
+        transaction_scope = st.radio(
+            "Add to:",
+            ["Personal", "Shared"],
+            horizontal=True,
+            help="Personal transactions are only visible to you. Shared transactions are visible to both users."
         )
+    else:
+        transaction_scope = "Shared"
+    
+    transaction_type = st.selectbox("Transaction Type", ["Expense", "Income"])
 
-    # --- Budget Overview ---
-    st.header("📊 Budget Overview")
-    
-    budgets = get_budgets()
-    budget_settings = get_budget_settings()
-    
-    if budgets:
-        # Calculate spending by category for current period
-        if not expenses_df.empty:
-            # Get current period dates
-            current_period_start, current_period_end = get_current_period_dates("monthly")
+    if transaction_type == "Expense":
+        with st.form("expense_form", clear_on_submit=True):
+            date = st.date_input("Date", datetime.now())
+            amount = st.number_input("Amount", min_value=0.0, format="%.2f")
             
-            # Filter expenses to current period
-            period_expenses = expenses_df[
-                (expenses_df['Date'] >= current_period_start) & 
-                (expenses_df['Date'] <= current_period_end)
-            ]
+            # Store selection with suggestions
+            all_stores = get_all_stores()
+            store = st.selectbox("Store", options=[""] + all_stores, 
+                               help="Select from existing stores or type a new one below")
             
-            if not period_expenses.empty:
-                spending_by_category = period_expenses.groupby('Category')['Amount'].sum().to_dict()
-            else:
-                spending_by_category = {}
-        else:
-            spending_by_category = {}
-        
-        # Overall budget status
-        total_budgeted = sum(b.get('amount', 0) for b in budgets.values() if b.get('is_active', True))
-        total_spent = sum(spending_by_category.values())
-        total_remaining = total_budgeted - total_spent
-        
-        if total_budgeted > 0:
-            overall_percentage = (total_spent / total_budgeted) * 100
-        else:
-            overall_percentage = 0
-        
-        # Determine overall status
-        if overall_percentage >= budget_settings['alert_threshold']:
-            overall_status = "🔴"
-            status_text = "Over Budget"
-        elif overall_percentage >= budget_settings['warning_threshold']:
-            overall_status = "🟡"
-            status_text = "Warning"
-        else:
-            overall_status = "🟢"
-            status_text = "On Track"
-        
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Budgeted", f"€{total_budgeted:,.2f}")
-        col2.metric("Total Spent", f"€{total_spent:,.2f}")
-        col3.metric("Remaining", f"€{total_remaining:,.2f}")
-        col4.metric("Status", f"{overall_status} {status_text}", f"{overall_percentage:.1f}%")
-        
-        # Budget progress bars by category
-        st.subheader("Budget Progress by Category")
-        
-        # Create columns for budget cards
-        num_budgets = len(budgets)
-        cols_per_row = 2
-        
-        budget_items = list(budgets.items())
-        for i in range(0, num_budgets, cols_per_row):
-            cols = st.columns(cols_per_row)
+            # Alternative: text input for new stores
+            new_store = st.text_input("Or enter a new store name:")
+            if new_store:
+                store = new_store
             
-            for j, col in enumerate(cols):
-                if i + j < num_budgets:
-                    category, budget = budget_items[i + j]
-                    
-                    with col:
-                        spent = spending_by_category.get(category, 0)
-                        budget_amount = budget.get('amount', 0)
-                        
-                        if budget_amount > 0:
-                            percentage = (spent / budget_amount) * 100
-                        else:
-                            percentage = 0
-                        
-                        remaining = budget_amount - spent
-                        
-                        # Determine color based on percentage
-                        if percentage >= budget_settings['alert_threshold']:
-                            status_emoji = "🔴"
-                            progress_color = "red"
-                        elif percentage >= budget_settings['warning_threshold']:
-                            status_emoji = "🟡"
-                            progress_color = "orange"
-                        else:
-                            status_emoji = "🟢"
-                            progress_color = "green"
-                        
-                        # Display budget card
-                        st.markdown(f"**{status_emoji} {category}**")
-                        st.progress(min(percentage / 100, 1.0))
-                        st.caption(f"€{spent:,.2f} / €{budget_amount:,.2f} ({percentage:.1f}%)")
-                        
-                        if remaining >= 0:
-                            st.caption(f"€{remaining:,.2f} remaining")
-                        else:
-                            st.caption(f"⚠️ €{abs(remaining):,.2f} over budget!")
-        
-        # Budget vs Actual Comparison Chart
-        st.subheader("Budget vs. Actual Spending")
-        
-        comparison_data = []
-        for category, budget in budgets.items():
-            if budget.get('is_active', True):
-                spent = spending_by_category.get(category, 0)
-                budget_amount = budget.get('amount', 0)
-                
-                comparison_data.append({
-                    'Category': category,
-                    'Budgeted': budget_amount,
-                    'Actual': spent
-                })
-        
-        if comparison_data:
-            comparison_df = pd.DataFrame(comparison_data)
+            # Category selection with auto-categorization
+            categories = get_categories()
             
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                name='Budgeted',
-                x=comparison_df['Category'],
-                y=comparison_df['Budgeted'],
-                marker_color='lightblue'
-            ))
-            fig.add_trace(go.Bar(
-                name='Actual',
-                x=comparison_df['Category'],
-                y=comparison_df['Actual'],
-                marker_color='salmon'
-            ))
-            
-            fig.update_layout(
-                barmode='group',
-                title='Budget vs. Actual by Category',
-                xaxis_title='Category',
-                yaxis_title='Amount (€)',
-                hovermode='x unified'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Spending rate analysis
-        st.subheader("Spending Rate Analysis")
-        
-        # Calculate days into the month
-        now = datetime.now()
-        current_period_start, current_period_end = get_current_period_dates("monthly")
-        
-        days_in_period = (current_period_end - current_period_start).days + 1
-        days_elapsed = (now - current_period_start).days + 1
-        period_progress = (days_elapsed / days_in_period) * 100
-        
-        if total_budgeted > 0:
-            spending_rate = (total_spent / total_budgeted) * 100
-            
-            if spending_rate > period_progress + 10:
-                pace_status = "⚠️ Spending faster than expected"
-                pace_color = "red"
-            elif spending_rate < period_progress - 10:
-                pace_status = "✅ Spending slower than expected"
-                pace_color = "green"
-            else:
-                pace_status = "➡️ Spending on pace"
-                pace_color = "blue"
-            
-            # Project end of period spending
-            if days_elapsed > 0:
-                projected_total = (total_spent / days_elapsed) * days_in_period
-                projected_over = projected_total - total_budgeted
-            else:
-                projected_total = 0
-                projected_over = 0
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    "Period Progress",
-                    f"Day {days_elapsed} of {days_in_period}",
-                    f"{period_progress:.1f}%"
-                )
-            
-            with col2:
-                st.metric(
-                    "Spending Rate",
-                    f"{spending_rate:.1f}%",
-                    pace_status
-                )
-            
-            with col3:
-                if projected_over > 0:
-                    st.metric(
-                        "Projected Month-End",
-                        f"€{projected_total:,.2f}",
-                        f"€{projected_over:+,.2f} over",
-                        delta_color="inverse"
-                    )
+            # Auto-categorize if store is provided
+            suggested_category = None
+            if store:
+                suggested_category = auto_categorize_store(store)
+                if suggested_category in categories:
+                    default_index = categories.index(suggested_category)
                 else:
-                    st.metric(
-                        "Projected Month-End",
-                        f"€{projected_total:,.2f}",
-                        f"€{abs(projected_over):,.2f} under",
-                        delta_color="normal"
-                    )
+                    default_index = 0
+            else:
+                default_index = 0
             
-            # Tips based on spending
-            if spending_rate > period_progress + 10:
-                # Find categories that are over budget
-                over_categories = []
-                for category, budget in budgets.items():
-                    spent = spending_by_category.get(category, 0)
-                    budget_amount = budget.get('amount', 0)
-                    if budget_amount > 0 and (spent / budget_amount) > 1.0:
-                        over_categories.append(category)
+            category = st.selectbox("Category", categories, 
+                                  index=default_index,
+                                  help=f"Auto-suggested: {suggested_category}" if suggested_category else "Select a category")
+            
+            payment_option = st.selectbox("Payment Option", ["Cash", "Card"])
+            card = st.text_input("Card (if applicable)")
+            submitted = st.form_submit_button("Add Expense")
+            
+            if submitted:
+                if not store:
+                    st.error("Please enter a store name.")
+                elif not amount:
+                    st.error("Please enter an amount.")
+                else:
+                    # Add new store to configuration if it's not already there
+                    if store not in all_stores:
+                        add_store_to_category(category, store)
+                    
+                    expense_df = pd.DataFrame(
+                        [
+                            {
+                                "Date": date.strftime("%d-%m-%Y"),  # Format as dd-MM-YYYY
+                                "Amount": amount,
+                                "Store": store,
+                                "Category": category,
+                                "Payment Option": payment_option,
+                                "Card": card,
+                            }
+                        ]
+                    )
+                    
+                    # Determine worksheet based on scope
+                    if transaction_scope == "Shared":
+                        worksheets = get_worksheet_names("shared")
+                        worksheet_name = worksheets["expenses"]
+                    else:
+                        worksheets = get_worksheet_names(current_user)
+                        worksheet_name = worksheets["expenses"]
+                    
+                    try:
+                        # Read existing data and append the new row
+                        existing_data = conn.read(worksheet=worksheet_name, ttl=0)
+                        updated_df = pd.concat([existing_data, expense_df], ignore_index=True)
+                        conn.update(worksheet=worksheet_name, data=updated_df)
+                        st.success(f"✅ Expense added successfully to {transaction_scope} account!")
+                        if store not in all_stores:
+                            st.info(f"Added '{store}' to {category} category for future use.")
+                        
+                        # Show budget alert
+                        show_budget_alert(category, amount, conn)
+                    except Exception as e:
+                        # If the sheet doesn't exist, conn.read will fail.
+                        # In this case, we create the sheet with the new data.
+                        if "gspread.exceptions.WorksheetNotFound" in str(e):
+                            st.warning(f"Worksheet '{worksheet_name}' not found. A new one will be created.")
+                            conn.update(worksheet=worksheet_name, data=expense_df)
+                            st.success(f"Expense added successfully to {transaction_scope} account!")
+                            if store not in all_stores:
+                                st.info(f"Added '{store}' to {category} category for future use.")
+                        else:
+                            st.error(f"An error occurred: {e}")
+
+
+    elif transaction_type == "Income":
+        with st.form("income_form", clear_on_submit=True):
+            date = st.date_input("Date", datetime.now())
+            amount = st.number_input("Amount", min_value=0.0, format="%.2f")
+            source = st.text_input("Source")
+            payment_option = st.selectbox("Payment Option", ["Bank Transfer", "Cash"])
+            submitted = st.form_submit_button("Add Income")
+
+            if submitted:
+                income_df = pd.DataFrame(
+                    [
+                        {
+                            "Date": date.strftime("%d-%m-%Y"),  # Format as dd-MM-YYYY
+                            "Amount": amount,
+                            "Source": source,
+                            "Payment Option": payment_option,
+                        }
+                    ]
+                )
                 
-                if over_categories:
-                    st.warning(f"💡 **Tip**: Consider reducing spending in: {', '.join(over_categories)}")
-    else:
-        st.info("No budgets configured. Visit the ⚙️ Settings page to set up your budgets!")
+                # Determine worksheet based on scope
+                if transaction_scope == "Shared":
+                    worksheets = get_worksheet_names("shared")
+                    worksheet_name = worksheets["income"]
+                else:
+                    worksheets = get_worksheet_names(current_user)
+                    worksheet_name = worksheets["income"]
+                
+                try:
+                    # Read existing data and append the new row
+                    existing_data = conn.read(worksheet=worksheet_name, ttl=0)
+                    updated_df = pd.concat([existing_data, income_df], ignore_index=True)
+                    conn.update(worksheet=worksheet_name, data=updated_df)
+                    st.success(f"✅ Income added successfully to {transaction_scope} account!")
+                except Exception as e:
+                     # If the sheet doesn't exist, conn.read will fail.
+                    # In this case, we create the sheet with the new data.
+                    if "gspread.exceptions.WorksheetNotFound" in str(e):
+                        st.warning(f"Worksheet '{worksheet_name}' not found. A new one will be created.")
+                        conn.update(worksheet=worksheet_name, data=income_df)
+                        st.success(f"Income added successfully to {transaction_scope} account!")
+                    else:
+                        st.error(f"An error occurred: {e}")
 
-    # --- Visualizations ---
-    st.header("Expenses Analysis")
-    if not expenses_df.empty:
-        # Pie chart of expenses by category
-        fig_cat = px.pie(expenses_df, names='Category', values='Amount', title='Expenses by Category')
-        st.plotly_chart(fig_cat, use_container_width=True)
-
-        # Treemap of expenses
-        fig_treemap = px.treemap(expenses_df, path=['Category', 'Store'], values='Amount', title='Expenses Breakdown')
-        st.plotly_chart(fig_treemap, use_container_width=True)
-
-        # Bar chart of expenses over time
-        expenses_over_time = expenses_df.set_index('Date').resample('MS')['Amount'].sum().reset_index()
-        fig_time = px.bar(expenses_over_time, x='Date', y='Amount', title='Monthly Expenses')
-        st.plotly_chart(fig_time, use_container_width=True)
-    else:
-        st.info("No expense data to display for the selected range.")
-
-    st.header("Income Analysis")
-    if not income_df.empty:
-        # Pie chart of income by source
-        fig_source = px.pie(income_df, names='Source', values='Amount', title='Income by Source')
-        st.plotly_chart(fig_source, use_container_width=True)
-    else:
-        st.info("No income data to display for the selected range.")
-        
-    st.header("Income vs. Expenses")
-    if not income_df.empty or not expenses_df.empty:
-        # Combine data for comparison
-        income_summary = income_df.set_index('Date').resample('MS')['Amount'].sum().rename('Income')
-        expenses_summary = expenses_df.set_index('Date').resample('MS')['Amount'].sum().rename('Expenses')
-        comparison_df = pd.concat([income_summary, expenses_summary], axis=1).fillna(0).reset_index()
-        
-        if not comparison_df.empty:
-            fig_comparison = px.bar(comparison_df, x='Date', y=['Income', 'Expenses'], barmode='group', title='Monthly Income vs. Expenses')
-            st.plotly_chart(fig_comparison, use_container_width=True)
+    # --- Display Recent Transactions ---
+    st.header(f"Recent {transaction_type}s for {active_user_name}")
+    try:
+        if current_user in ["user1", "user2"]:
+            if transaction_type == "Expense":
+                df = get_user_and_shared_data(conn, current_user, "expenses")
+            else:
+                df = get_user_and_shared_data(conn, current_user, "income")
         else:
-            st.info("No data for income vs. expenses comparison in the selected range.")
-    else:
-        st.info("Insufficient data for income vs. expenses comparison.")
+            worksheets = get_worksheet_names("shared")
+            if transaction_type == "Expense":
+                df = conn.read(worksheet=worksheets["expenses"], ttl=0)
+            else:
+                df = conn.read(worksheet=worksheets["income"], ttl=0)
+        
+        if not df.empty:
+            # Sort by most recent if Date column exists
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'], format='mixed', dayfirst=True, errors='coerce')
+                df = df.sort_values('Date', ascending=False)
+            
+            st.dataframe(df.head(10))
+        else:
+            st.info("No recent transactions found.")
+    except Exception as e:
+        st.error(f"Could not load recent transactions. Have you added any yet? Error: {e}")
 
-    # --- Detailed Transactions ---
-    st.header("Recent Transactions")
-    if not expenses_df.empty:
-        st.dataframe(expenses_df.sort_values('Date', ascending=False).head(10))
-    else:
-        st.write("No recent expenses in the selected date range.")
 
 if __name__ == "__main__":
-    main() 
+    main()
