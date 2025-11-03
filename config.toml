@@ -2,6 +2,13 @@
 default_category = "Other"
 auto_categorize = true
 
+[google_sheets]
+# Spreadsheet URL is read from GOOGLE_SHEETS_URL environment variable for security
+# Set it in your environment: export GOOGLE_SHEETS_URL="your-spreadsheet-url"
+# Or in .streamlit/secrets.toml: GOOGLE_SHEETS_URL = "your-spreadsheet-url"
+expenses_worksheet = "expenses_taras"
+income_worksheet = "income_taras"
+
 [account_settings]
 initial_balance = 0.0
 initial_balance_date = ""

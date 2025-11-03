@@ -739,4 +739,60 @@ def calculate_budget_status(category: str, spent_amount: float) -> Dict[str, Any
         "percentage": percentage,
         "status": status,
         "period": budget.get("period", "monthly")
-    } 
+    }
+
+
+# --- Google Sheets Configuration ---
+
+def get_google_sheets_config() -> Dict[str, str]:
+    """
+    Get Google Sheets configuration.
+    Reads spreadsheet URL from environment variable for security.
+    
+    Returns:
+        Dictionary with spreadsheet URL and worksheet names
+    """
+    sheets_config = config_manager.config.get("google_sheets", {})
+    
+    # Get spreadsheet URL from environment variable first, fallback to config
+    spreadsheet_url = os.environ.get("GOOGLE_SHEETS_URL", sheets_config.get("spreadsheet_url", ""))
+    
+    return {
+        "spreadsheet_url": spreadsheet_url,
+        "expenses_worksheet": sheets_config.get("expenses_worksheet", "expenses_taras"),
+        "income_worksheet": sheets_config.get("income_worksheet", "income_taras")
+    }
+
+
+def update_google_sheets_config(spreadsheet_url: str = None, 
+                                expenses_worksheet: str = None,
+                                income_worksheet: str = None) -> bool:
+    """
+    Update Google Sheets configuration.
+    
+    Args:
+        spreadsheet_url: URL of the Google Spreadsheet
+        expenses_worksheet: Name of the expenses worksheet
+        income_worksheet: Name of the income worksheet
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if "google_sheets" not in config_manager.config:
+            config_manager.config["google_sheets"] = {}
+        
+        if spreadsheet_url is not None:
+            config_manager.config["google_sheets"]["spreadsheet_url"] = spreadsheet_url
+        
+        if expenses_worksheet is not None:
+            config_manager.config["google_sheets"]["expenses_worksheet"] = expenses_worksheet
+        
+        if income_worksheet is not None:
+            config_manager.config["google_sheets"]["income_worksheet"] = income_worksheet
+        
+        config_manager._save_config()
+        return True
+    except Exception as e:
+        print(f"Error updating Google Sheets config: {e}")
+        return False 

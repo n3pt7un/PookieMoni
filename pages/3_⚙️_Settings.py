@@ -22,7 +22,9 @@ from config_utils import (
     set_budget,
     delete_budget,
     get_budget_settings,
-    update_budget_settings
+    update_budget_settings,
+    get_google_sheets_config,
+    update_google_sheets_config
 )
 
 # --- Page Configuration ---
@@ -56,8 +58,8 @@ def main():
     """)
     
     # Create tabs for different settings sections
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🔧 General", "💰 Account Balance", "📊 Budget Planning", 
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "🔧 General", "📊 Google Sheets", "💰 Account Balance", "📈 Budget Planning", 
         "📂 Categories", "🏪 Stores", "🏷️ Keywords", "❓ Help"
     ])
     
@@ -65,21 +67,24 @@ def main():
         general_settings()
     
     with tab2:
-        account_balance_management()
+        google_sheets_settings()
     
     with tab3:
-        budget_planning()
+        account_balance_management()
     
     with tab4:
-        category_management()
+        budget_planning()
     
     with tab5:
-        store_management()
+        category_management()
     
     with tab6:
-        keyword_management()
+        store_management()
     
     with tab7:
+        keyword_management()
+    
+    with tab8:
         help_documentation()
 
 def general_settings():
@@ -134,6 +139,100 @@ def general_settings():
                     st.rerun()
                 else:
                     st.error("Failed to reset settings.")
+
+def google_sheets_settings():
+    """Google Sheets connection settings."""
+    st.header("Google Sheets Configuration")
+    
+    st.markdown("""
+    Configure your Google Sheets connection here. The spreadsheet URL is stored as an 
+    **environment variable** for security.
+    """)
+    
+    # Get current configuration
+    sheets_config = get_google_sheets_config()
+    
+    st.subheader("Current Configuration")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric("Expenses Worksheet", sheets_config['expenses_worksheet'])
+    
+    with col2:
+        st.metric("Income Worksheet", sheets_config['income_worksheet'])
+    
+    # Show connection status
+    import os
+    has_url = bool(os.environ.get("GOOGLE_SHEETS_URL") or sheets_config['spreadsheet_url'])
+    
+    if has_url:
+        st.success("✅ Spreadsheet URL is configured")
+        st.info("🔒 Spreadsheet URL is read from `GOOGLE_SHEETS_URL` environment variable")
+    else:
+        st.warning("⚠️ Spreadsheet URL not configured")
+        st.info("""
+        **To configure Google Sheets connection:**
+        
+        1. **Set environment variable** (recommended):
+           ```bash
+           export GOOGLE_SHEETS_URL="your-google-sheets-url"
+           ```
+        
+        2. **Or create `.streamlit/secrets.toml`**:
+           ```toml
+           GOOGLE_SHEETS_URL = "your-google-sheets-url"
+           ```
+        
+        3. **Then restart the app**
+        """)
+    
+    st.subheader("Update Worksheet Names")
+    
+    with st.form("sheets_config_form"):
+        expenses_ws = st.text_input(
+            "Expenses Worksheet Name",
+            value=sheets_config['expenses_worksheet'],
+            help="Name of the worksheet containing expense data"
+        )
+        
+        income_ws = st.text_input(
+            "Income Worksheet Name",
+            value=sheets_config['income_worksheet'],
+            help="Name of the worksheet containing income data"
+        )
+        
+        if st.form_submit_button("Update Worksheet Names", type="primary"):
+            if update_google_sheets_config(
+                expenses_worksheet=expenses_ws,
+                income_worksheet=income_ws
+            ):
+                st.success("Worksheet names updated successfully!")
+                st.rerun()
+            else:
+                st.error("Failed to update worksheet names.")
+    
+    st.subheader("📚 Setup Guide")
+    
+    with st.expander("How to get your Google Sheets URL"):
+        st.markdown("""
+        1. Open your Google Sheet
+        2. Copy the URL from your browser's address bar
+        3. It should look like:
+           ```
+           https://docs.google.com/spreadsheets/d/YOUR-SHEET-ID/edit
+           ```
+        4. Set it as an environment variable before starting the app
+        """)
+    
+    with st.expander("Security Best Practices"):
+        st.markdown("""
+        - ✅ **DO** use environment variables for sensitive URLs
+        - ✅ **DO** use `.streamlit/secrets.toml` for local development
+        - ✅ **DO** add `.streamlit/secrets.toml` to `.gitignore`
+        - ❌ **DON'T** commit sensitive URLs to git
+        - ❌ **DON'T** share your spreadsheet URL publicly
+        """)
 
 def account_balance_management():
     """Manage initial account balance."""
