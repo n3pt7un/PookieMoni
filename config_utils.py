@@ -7,8 +7,9 @@ for managing categories and store names.
 
 import toml
 import os
-from typing import Dict, List, Optional
-import re
+from typing import Dict, List, Tuple, Any
+from datetime import datetime, timedelta
+import calendar
 
 
 class ConfigManager:
@@ -430,4 +431,312 @@ def update_settings(default_category: str = None, auto_categorize: bool = None) 
 
 def rename_category(old_name: str, new_name: str) -> bool:
     """Rename a category."""
-    return config_manager.rename_category(old_name, new_name) 
+    return config_manager.rename_category(old_name, new_name)
+
+
+# --- Account Balance Management ---
+
+def get_initial_balance() -> Dict[str, any]:
+    """
+    Get the initial account balance settings.
+    
+    Returns:
+        Dictionary with balance, date, and notes
+    """
+    account_settings = config_manager.config.get("account_settings", {})
+    return {
+        "balance": account_settings.get("initial_balance", 0.0),
+        "date": account_settings.get("initial_balance_date", ""),
+        "notes": account_settings.get("initial_balance_notes", ""),
+        "currency": account_settings.get("currency", "EUR")
+    }
+
+
+def set_initial_balance(amount: float, date: str, notes: str = "") -> bool:
+    """
+    Set the initial account balance.
+    
+    Args:
+        amount: The initial balance amount (can be negative)
+        date: Date when balance is set (format: dd-MM-YYYY)
+        notes: Optional notes about the balance
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if "account_settings" not in config_manager.config:
+            config_manager.config["account_settings"] = {}
+        
+        config_manager.config["account_settings"]["initial_balance"] = float(amount)
+        config_manager.config["account_settings"]["initial_balance_date"] = date
+        config_manager.config["account_settings"]["initial_balance_notes"] = notes
+        
+        if "currency" not in config_manager.config["account_settings"]:
+            config_manager.config["account_settings"]["currency"] = "EUR"
+        
+        config_manager._save_config()
+        return True
+    except Exception as e:
+        print(f"Error setting initial balance: {e}")
+        return False
+
+
+def get_balance_history() -> List[Dict]:
+    """
+    Get the history of balance changes.
+    
+    Returns:
+        List of balance records with date, amount, and notes
+    """
+    balance_history = config_manager.config.get("balance_history", [])
+    return balance_history
+
+
+def add_balance_to_history(amount: float, date: str, notes: str = "") -> bool:
+    """
+    Add a balance entry to the history.
+    
+    Args:
+        amount: The balance amount
+        date: Date of the balance (format: dd-MM-YYYY)
+        notes: Optional notes
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if "balance_history" not in config_manager.config:
+            config_manager.config["balance_history"] = []
+        
+        config_manager.config["balance_history"].append({
+            "date": date,
+            "balance": float(amount),
+            "notes": notes
+        })
+        
+        config_manager._save_config()
+        return True
+    except Exception as e:
+        print(f"Error adding balance to history: {e}")
+        return False
+
+
+# --- Budget Management ---
+
+def get_budgets() -> Dict[str, Dict]:
+    """
+    Get all configured budgets.
+    
+    Returns:
+        Dictionary of budgets by category with amount, period, etc.
+    """
+    return config_manager.config.get("budgets", {})
+
+
+def set_budget(category: str, amount: float, period: str = "monthly", 
+               start_date: str = "", is_active: bool = True) -> bool:
+    """
+    Set or update a budget for a category.
+    
+    Args:
+        category: Category name
+        amount: Budget amount
+        period: "monthly" or "weekly"
+        start_date: Budget start date (format: dd-MM-YYYY)
+        is_active: Whether the budget is currently active
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if "budgets" not in config_manager.config:
+            config_manager.config["budgets"] = {}
+        
+        config_manager.config["budgets"][category] = {
+            "amount": float(amount),
+            "period": period,
+            "start_date": start_date,
+            "is_active": is_active
+        }
+        
+        config_manager._save_config()
+        return True
+    except Exception as e:
+        print(f"Error setting budget: {e}")
+        return False
+
+
+def delete_budget(category: str) -> bool:
+    """
+    Delete a budget for a category.
+    
+    Args:
+        category: Category name
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if "budgets" in config_manager.config and category in config_manager.config["budgets"]:
+            del config_manager.config["budgets"][category]
+            config_manager._save_config()
+            return True
+        return False
+    except Exception as e:
+        print(f"Error deleting budget: {e}")
+        return False
+
+
+def get_budget_settings() -> Dict[str, any]:
+    """
+    Get budget configuration settings.
+    
+    Returns:
+        Dictionary with default period, thresholds, etc.
+    """
+    budget_settings = config_manager.config.get("budget_settings", {})
+    return {
+        "default_period": budget_settings.get("default_period", "monthly"),
+        "warning_threshold": budget_settings.get("warning_threshold", 80),
+        "alert_threshold": budget_settings.get("alert_threshold", 100)
+    }
+
+
+def update_budget_settings(default_period: str = None, warning_threshold: int = None, 
+                          alert_threshold: int = None) -> bool:
+    """
+    Update budget settings.
+    
+    Args:
+        default_period: Default budget period ("monthly" or "weekly")
+        warning_threshold: Warning threshold percentage
+        alert_threshold: Alert threshold percentage
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if "budget_settings" not in config_manager.config:
+            config_manager.config["budget_settings"] = {}
+        
+        if default_period is not None:
+            config_manager.config["budget_settings"]["default_period"] = default_period
+        
+        if warning_threshold is not None:
+            config_manager.config["budget_settings"]["warning_threshold"] = int(warning_threshold)
+        
+        if alert_threshold is not None:
+            config_manager.config["budget_settings"]["alert_threshold"] = int(alert_threshold)
+        
+        config_manager._save_config()
+        return True
+    except Exception as e:
+        print(f"Error updating budget settings: {e}")
+        return False
+
+
+def get_monthly_period(date: datetime = None) -> Tuple[datetime, datetime]:
+    """
+    Get the start and end dates for a monthly period.
+    
+    Args:
+        date: Reference date (defaults to today)
+        
+    Returns:
+        Tuple of (start_date, end_date) for the month
+    """
+    if date is None:
+        date = datetime.now()
+    start = date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_day = calendar.monthrange(date.year, date.month)[1]
+    end = date.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+    return start, end
+
+
+def get_weekly_period(date: datetime = None) -> Tuple[datetime, datetime]:
+    """
+    Get the start and end dates for a weekly period (Monday to Sunday).
+    
+    Args:
+        date: Reference date (defaults to today)
+        
+    Returns:
+        Tuple of (start_date, end_date) for the week
+    """
+    if date is None:
+        date = datetime.now()
+    # Monday is 0, Sunday is 6
+    start = date - timedelta(days=date.weekday())
+    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
+    return start, end
+
+
+def get_current_period_dates(period: str = "monthly") -> Tuple[datetime, datetime]:
+    """
+    Get the current period's start and end dates.
+    
+    Args:
+        period: "monthly" or "weekly"
+        
+    Returns:
+        Tuple of (start_date, end_date)
+    """
+    if period == "weekly":
+        return get_weekly_period()
+    else:
+        return get_monthly_period()
+
+
+def calculate_budget_status(category: str, spent_amount: float) -> Dict[str, Any]:
+    """
+    Calculate the budget status for a category.
+    
+    Args:
+        category: Category name
+        spent_amount: Amount spent in the category
+        
+    Returns:
+        Dictionary with budget status information
+    """
+    budgets = get_budgets()
+    settings = get_budget_settings()
+    
+    if category not in budgets:
+        return {
+            "has_budget": False,
+            "budget": 0.0,
+            "spent": spent_amount,
+            "remaining": 0.0,
+            "percentage": 0.0,
+            "status": "no_budget"
+        }
+    
+    budget = budgets[category]
+    budget_amount = budget.get("amount", 0.0)
+    
+    if budget_amount == 0:
+        percentage = 0.0
+    else:
+        percentage = (spent_amount / budget_amount) * 100
+    
+    remaining = budget_amount - spent_amount
+    
+    # Determine status based on thresholds
+    if percentage >= settings["alert_threshold"]:
+        status = "alert"
+    elif percentage >= settings["warning_threshold"]:
+        status = "warning"
+    else:
+        status = "ok"
+    
+    return {
+        "has_budget": True,
+        "budget": budget_amount,
+        "spent": spent_amount,
+        "remaining": remaining,
+        "percentage": percentage,
+        "status": status,
+        "period": budget.get("period", "monthly")
+    } 

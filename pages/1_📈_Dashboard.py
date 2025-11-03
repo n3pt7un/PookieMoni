@@ -1,8 +1,16 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
+from config_utils import (
+    get_initial_balance,
+    get_budgets,
+    get_budget_settings,
+    calculate_budget_status,
+    get_current_period_dates
+)
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -80,14 +88,258 @@ def main():
 
     # --- Key Metrics ---
     st.header("Key Metrics")
-    total_income = income_df['Amount'].sum()
-    total_expenses = expenses_df['Amount'].sum()
+    
+    # Get balance info
+    balance_info = get_initial_balance()
+    initial_balance = balance_info['balance']
+    currency = balance_info['currency']
+    
+    total_income = income_df['Amount'].sum() if not income_df.empty else 0
+    total_expenses = expenses_df['Amount'].sum() if not expenses_df.empty else 0
     net_savings = total_income - total_expenses
+    current_balance = initial_balance + net_savings
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Income", f"€{total_income:,.2f}")
-    col2.metric("Total Expenses", f"€{total_expenses:,.2f}")
-    col3.metric("Net Savings", f"€{net_savings:,.2f}")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Initial Balance", f"{currency} {initial_balance:,.2f}")
+    col2.metric("Total Income", f"{currency} {total_income:,.2f}")
+    col3.metric("Total Expenses", f"{currency} {total_expenses:,.2f}")
+    
+    # Show current balance with delta
+    balance_delta = current_balance - initial_balance
+    col4.metric(
+        "Current Balance", 
+        f"{currency} {current_balance:,.2f}",
+        delta=f"{balance_delta:+,.2f}",
+        delta_color="normal"
+    )
+    
+    # Visual progress indicator
+    if initial_balance != 0:
+        balance_change_pct = (balance_delta / abs(initial_balance)) * 100
+        st.progress(
+            min(max(balance_change_pct / 100, 0), 1),
+            text=f"Balance Change: {balance_delta:+,.2f} {currency} ({balance_change_pct:+.1f}%)"
+        )
+
+    # --- Budget Overview ---
+    st.header("📊 Budget Overview")
+    
+    budgets = get_budgets()
+    budget_settings = get_budget_settings()
+    
+    if budgets:
+        # Calculate spending by category for current period
+        if not expenses_df.empty:
+            # Get current period dates
+            current_period_start, current_period_end = get_current_period_dates("monthly")
+            
+            # Filter expenses to current period
+            period_expenses = expenses_df[
+                (expenses_df['Date'] >= current_period_start) & 
+                (expenses_df['Date'] <= current_period_end)
+            ]
+            
+            if not period_expenses.empty:
+                spending_by_category = period_expenses.groupby('Category')['Amount'].sum().to_dict()
+            else:
+                spending_by_category = {}
+        else:
+            spending_by_category = {}
+        
+        # Overall budget status
+        total_budgeted = sum(b.get('amount', 0) for b in budgets.values() if b.get('is_active', True))
+        total_spent = sum(spending_by_category.values())
+        total_remaining = total_budgeted - total_spent
+        
+        if total_budgeted > 0:
+            overall_percentage = (total_spent / total_budgeted) * 100
+        else:
+            overall_percentage = 0
+        
+        # Determine overall status
+        if overall_percentage >= budget_settings['alert_threshold']:
+            overall_status = "🔴"
+            status_text = "Over Budget"
+        elif overall_percentage >= budget_settings['warning_threshold']:
+            overall_status = "🟡"
+            status_text = "Warning"
+        else:
+            overall_status = "🟢"
+            status_text = "On Track"
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Budgeted", f"€{total_budgeted:,.2f}")
+        col2.metric("Total Spent", f"€{total_spent:,.2f}")
+        col3.metric("Remaining", f"€{total_remaining:,.2f}")
+        col4.metric("Status", f"{overall_status} {status_text}", f"{overall_percentage:.1f}%")
+        
+        # Budget progress bars by category
+        st.subheader("Budget Progress by Category")
+        
+        # Create columns for budget cards
+        num_budgets = len(budgets)
+        cols_per_row = 2
+        
+        budget_items = list(budgets.items())
+        for i in range(0, num_budgets, cols_per_row):
+            cols = st.columns(cols_per_row)
+            
+            for j, col in enumerate(cols):
+                if i + j < num_budgets:
+                    category, budget = budget_items[i + j]
+                    
+                    with col:
+                        spent = spending_by_category.get(category, 0)
+                        budget_amount = budget.get('amount', 0)
+                        
+                        if budget_amount > 0:
+                            percentage = (spent / budget_amount) * 100
+                        else:
+                            percentage = 0
+                        
+                        remaining = budget_amount - spent
+                        
+                        # Determine color based on percentage
+                        if percentage >= budget_settings['alert_threshold']:
+                            status_emoji = "🔴"
+                            progress_color = "red"
+                        elif percentage >= budget_settings['warning_threshold']:
+                            status_emoji = "🟡"
+                            progress_color = "orange"
+                        else:
+                            status_emoji = "🟢"
+                            progress_color = "green"
+                        
+                        # Display budget card
+                        st.markdown(f"**{status_emoji} {category}**")
+                        st.progress(min(percentage / 100, 1.0))
+                        st.caption(f"€{spent:,.2f} / €{budget_amount:,.2f} ({percentage:.1f}%)")
+                        
+                        if remaining >= 0:
+                            st.caption(f"€{remaining:,.2f} remaining")
+                        else:
+                            st.caption(f"⚠️ €{abs(remaining):,.2f} over budget!")
+        
+        # Budget vs Actual Comparison Chart
+        st.subheader("Budget vs. Actual Spending")
+        
+        comparison_data = []
+        for category, budget in budgets.items():
+            if budget.get('is_active', True):
+                spent = spending_by_category.get(category, 0)
+                budget_amount = budget.get('amount', 0)
+                
+                comparison_data.append({
+                    'Category': category,
+                    'Budgeted': budget_amount,
+                    'Actual': spent
+                })
+        
+        if comparison_data:
+            comparison_df = pd.DataFrame(comparison_data)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                name='Budgeted',
+                x=comparison_df['Category'],
+                y=comparison_df['Budgeted'],
+                marker_color='lightblue'
+            ))
+            fig.add_trace(go.Bar(
+                name='Actual',
+                x=comparison_df['Category'],
+                y=comparison_df['Actual'],
+                marker_color='salmon'
+            ))
+            
+            fig.update_layout(
+                barmode='group',
+                title='Budget vs. Actual by Category',
+                xaxis_title='Category',
+                yaxis_title='Amount (€)',
+                hovermode='x unified'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Spending rate analysis
+        st.subheader("Spending Rate Analysis")
+        
+        # Calculate days into the month
+        now = datetime.now()
+        current_period_start, current_period_end = get_current_period_dates("monthly")
+        
+        days_in_period = (current_period_end - current_period_start).days + 1
+        days_elapsed = (now - current_period_start).days + 1
+        period_progress = (days_elapsed / days_in_period) * 100
+        
+        if total_budgeted > 0:
+            spending_rate = (total_spent / total_budgeted) * 100
+            
+            if spending_rate > period_progress + 10:
+                pace_status = "⚠️ Spending faster than expected"
+                pace_color = "red"
+            elif spending_rate < period_progress - 10:
+                pace_status = "✅ Spending slower than expected"
+                pace_color = "green"
+            else:
+                pace_status = "➡️ Spending on pace"
+                pace_color = "blue"
+            
+            # Project end of period spending
+            if days_elapsed > 0:
+                projected_total = (total_spent / days_elapsed) * days_in_period
+                projected_over = projected_total - total_budgeted
+            else:
+                projected_total = 0
+                projected_over = 0
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Period Progress",
+                    f"Day {days_elapsed} of {days_in_period}",
+                    f"{period_progress:.1f}%"
+                )
+            
+            with col2:
+                st.metric(
+                    "Spending Rate",
+                    f"{spending_rate:.1f}%",
+                    pace_status
+                )
+            
+            with col3:
+                if projected_over > 0:
+                    st.metric(
+                        "Projected Month-End",
+                        f"€{projected_total:,.2f}",
+                        f"€{projected_over:+,.2f} over",
+                        delta_color="inverse"
+                    )
+                else:
+                    st.metric(
+                        "Projected Month-End",
+                        f"€{projected_total:,.2f}",
+                        f"€{abs(projected_over):,.2f} under",
+                        delta_color="normal"
+                    )
+            
+            # Tips based on spending
+            if spending_rate > period_progress + 10:
+                # Find categories that are over budget
+                over_categories = []
+                for category, budget in budgets.items():
+                    spent = spending_by_category.get(category, 0)
+                    budget_amount = budget.get('amount', 0)
+                    if budget_amount > 0 and (spent / budget_amount) > 1.0:
+                        over_categories.append(category)
+                
+                if over_categories:
+                    st.warning(f"💡 **Tip**: Consider reducing spending in: {', '.join(over_categories)}")
+    else:
+        st.info("No budgets configured. Visit the ⚙️ Settings page to set up your budgets!")
 
     # --- Visualizations ---
     st.header("Expenses Analysis")

@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from config_utils import (
     get_categories, 
     get_stores_for_category, 
@@ -12,7 +13,16 @@ from config_utils import (
     add_keyword_to_category,
     remove_keyword_from_category,
     update_settings,
-    config_manager
+    config_manager,
+    get_initial_balance,
+    set_initial_balance,
+    add_balance_to_history,
+    get_balance_history,
+    get_budgets,
+    set_budget,
+    delete_budget,
+    get_budget_settings,
+    update_budget_settings
 )
 
 # --- Page Configuration ---
@@ -39,21 +49,30 @@ def main():
     """)
     
     # Create tabs for different settings sections
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔧 General", "📂 Categories", "🏪 Stores", "🏷️ Keywords", "❓ Help"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "🔧 General", "💰 Account Balance", "📊 Budget Planning", 
+        "📂 Categories", "🏪 Stores", "🏷️ Keywords", "❓ Help"
+    ])
     
     with tab1:
         general_settings()
     
     with tab2:
-        category_management()
+        account_balance_management()
     
     with tab3:
-        store_management()
+        budget_planning()
     
     with tab4:
-        keyword_management()
+        category_management()
     
     with tab5:
+        store_management()
+    
+    with tab6:
+        keyword_management()
+    
+    with tab7:
         help_documentation()
 
 def general_settings():
@@ -108,6 +127,290 @@ def general_settings():
                     st.rerun()
                 else:
                     st.error("Failed to reset settings.")
+
+def account_balance_management():
+    """Manage initial account balance."""
+    st.header("Account Balance Management")
+    
+    # Get current balance settings
+    balance_info = get_initial_balance()
+    
+    # Display current account settings
+    st.subheader("Current Account Settings")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Initial Balance", f"{balance_info['currency']} {balance_info['balance']:,.2f}")
+    
+    with col2:
+        if balance_info['date']:
+            st.metric("Set On", balance_info['date'])
+        else:
+            st.metric("Set On", "Not set yet")
+    
+    with col3:
+        if balance_info['notes']:
+            st.info(f"📝 {balance_info['notes']}")
+    
+    # Set/Update Initial Balance
+    st.subheader("Set/Update Initial Balance")
+    
+    st.info("💡 **Tip**: Set your initial balance to reflect your starting financial position. This can be positive or negative (if starting with debt).")
+    
+    with st.form("balance_form"):
+        balance_date = st.date_input(
+            "Date",
+            value=datetime.now(),
+            help="Date when this balance applies"
+        )
+        
+        balance_amount = st.number_input(
+            f"Amount ({balance_info['currency']})",
+            value=balance_info['balance'],
+            step=100.0,
+            format="%.2f",
+            help="Can be negative if you're starting with debt"
+        )
+        
+        balance_notes = st.text_area(
+            "Notes (optional)",
+            value=balance_info['notes'],
+            placeholder="e.g., 'Initial setup', 'After savings transfer', etc.",
+            help="Optional notes about this balance"
+        )
+        
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            if st.form_submit_button("Update Balance", type="primary"):
+                date_str = balance_date.strftime("%d-%m-%Y")
+                if set_initial_balance(balance_amount, date_str, balance_notes):
+                    # Also add to history
+                    add_balance_to_history(balance_amount, date_str, balance_notes)
+                    st.success(f"Balance updated to {balance_info['currency']} {balance_amount:,.2f}!")
+                    st.rerun()
+                else:
+                    st.error("Failed to update balance.")
+    
+    # Balance History
+    st.subheader("Balance History")
+    
+    history = get_balance_history()
+    
+    if history:
+        history_df = pd.DataFrame(history)
+        # Reorder columns for better display
+        history_df = history_df[['date', 'balance', 'notes']]
+        history_df.columns = ['Date', 'Balance', 'Notes']
+        history_df['Balance'] = history_df['Balance'].apply(lambda x: f"{balance_info['currency']} {x:,.2f}")
+        
+        st.dataframe(history_df, use_container_width=True)
+    else:
+        st.info("No balance history yet. Update your balance above to start tracking.")
+
+def budget_planning():
+    """Budget planning and management."""
+    st.header("Budget Planning")
+    
+    categories = get_categories()
+    budgets = get_budgets()
+    settings = get_budget_settings()
+    
+    # Overall Budget Summary
+    st.subheader("Budget Summary")
+    
+    if budgets:
+        total_budgeted = sum(b.get('amount', 0) for b in budgets.values() if b.get('is_active', True))
+        active_count = sum(1 for b in budgets.values() if b.get('is_active', True))
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Total Monthly Budget", f"€{total_budgeted:,.2f}")
+        
+        with col2:
+            st.metric("Active Budgets", f"{active_count} / {len(categories)}")
+    else:
+        st.info("No budgets configured yet. Set up your first budget below!")
+    
+    # Current Budgets Table
+    st.subheader("Current Budgets")
+    
+    if budgets:
+        budget_data = []
+        for category in categories:
+            if category in budgets:
+                budget = budgets[category]
+                budget_data.append({
+                    "Category": category,
+                    "Period": budget.get('period', 'monthly').capitalize(),
+                    "Budget": f"€{budget.get('amount', 0):,.2f}",
+                    "Status": "🟢 Active" if budget.get('is_active', True) else "⚪ Inactive"
+                })
+            else:
+                budget_data.append({
+                    "Category": category,
+                    "Period": "-",
+                    "Budget": "-",
+                    "Status": "⚪ No budget"
+                })
+        
+        budget_df = pd.DataFrame(budget_data)
+        st.dataframe(budget_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No budgets configured.")
+    
+    # Set Budget for Category
+    st.subheader("Set/Update Budget")
+    
+    with st.form("budget_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_category = st.selectbox(
+                "Category",
+                options=categories,
+                help="Select a category to set budget for"
+            )
+        
+        with col2:
+            # Get current budget if exists
+            current_budget = budgets.get(selected_category, {})
+            budget_amount = st.number_input(
+                "Budget Amount (€)",
+                min_value=0.0,
+                value=current_budget.get('amount', 0.0),
+                step=50.0,
+                format="%.2f",
+                help="Monthly budget limit for this category"
+            )
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            period = st.selectbox(
+                "Period",
+                options=["monthly", "weekly"],
+                index=0 if current_budget.get('period', 'monthly') == 'monthly' else 1,
+                help="Budget renewal period"
+            )
+        
+        with col2:
+            start_date = st.date_input(
+                "Start Date",
+                value=datetime.now(),
+                help="When this budget takes effect"
+            )
+        
+        with col3:
+            is_active = st.checkbox(
+                "Active",
+                value=current_budget.get('is_active', True),
+                help="Whether this budget is currently active"
+            )
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.form_submit_button("Set Budget", type="primary"):
+                if budget_amount > 0:
+                    date_str = start_date.strftime("%d-%m-%Y")
+                    if set_budget(selected_category, budget_amount, period, date_str, is_active):
+                        st.success(f"Budget set for {selected_category}: €{budget_amount:,.2f} / {period}")
+                        st.rerun()
+                    else:
+                        st.error("Failed to set budget.")
+                else:
+                    st.error("Budget amount must be greater than 0.")
+        
+        with col2:
+            if st.form_submit_button("Remove Budget", type="secondary"):
+                if selected_category in budgets:
+                    if delete_budget(selected_category):
+                        st.success(f"Budget removed for {selected_category}")
+                        st.rerun()
+                    else:
+                        st.error("Failed to remove budget.")
+                else:
+                    st.warning(f"No budget set for {selected_category}")
+    
+    # Quick Setup - Set All Budgets
+    st.subheader("Quick Setup")
+    
+    with st.expander("🚀 Set Budgets for All Categories"):
+        st.markdown("""
+        Set a default budget for all categories at once. You can customize individual budgets later.
+        """)
+        
+        with st.form("quick_budget_form"):
+            default_amount = st.number_input(
+                "Default Budget Amount (€)",
+                min_value=0.0,
+                value=500.0,
+                step=100.0,
+                format="%.2f"
+            )
+            
+            default_period = st.selectbox(
+                "Period",
+                options=["monthly", "weekly"]
+            )
+            
+            if st.form_submit_button("Apply to All Categories"):
+                if default_amount > 0:
+                    date_str = datetime.now().strftime("%d-%m-%Y")
+                    success_count = 0
+                    for category in categories:
+                        if set_budget(category, default_amount, default_period, date_str, True):
+                            success_count += 1
+                    
+                    st.success(f"Successfully set budgets for {success_count} categories!")
+                    st.rerun()
+                else:
+                    st.error("Budget amount must be greater than 0.")
+    
+    # Budget Alert Settings
+    st.subheader("Budget Alert Settings")
+    
+    st.markdown("""
+    Configure when you want to receive warnings about your spending:
+    - **Warning Threshold**: Get a yellow warning when spending reaches this percentage
+    - **Alert Threshold**: Get a red alert when spending reaches this percentage
+    """)
+    
+    with st.form("alert_settings_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            warning_threshold = st.slider(
+                "Warning Threshold (%)",
+                min_value=0,
+                max_value=100,
+                value=settings['warning_threshold'],
+                step=5,
+                help="Show yellow warning at this spending percentage"
+            )
+        
+        with col2:
+            alert_threshold = st.slider(
+                "Alert Threshold (%)",
+                min_value=0,
+                max_value=200,
+                value=settings['alert_threshold'],
+                step=5,
+                help="Show red alert at this spending percentage"
+            )
+        
+        if st.form_submit_button("Update Alert Settings"):
+            if update_budget_settings(
+                warning_threshold=warning_threshold,
+                alert_threshold=alert_threshold
+            ):
+                st.success("Alert settings updated!")
+                st.rerun()
+            else:
+                st.error("Failed to update alert settings.")
 
 def category_management():
     """Manage expense categories."""
