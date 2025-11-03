@@ -23,7 +23,14 @@ st.set_page_config(
 def main():
     st.title("📈 Financial Dashboard")
 
-    if not st.user.is_logged_in:
+    # Check if authentication is configured
+    try:
+        is_logged_in = st.user.is_logged_in
+    except (AttributeError, KeyError):
+        # Authentication not configured, run in demo mode
+        is_logged_in = True
+    
+    if not is_logged_in:
         st.warning("Please log in from the main page to view the dashboard.")
         return
 

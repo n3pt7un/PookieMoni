@@ -91,12 +91,26 @@ def show_budget_alert(category: str, new_amount: float, conn):
 def main():
     st.title("💰 Personal Finance Tracker")
 
-    if not st.user.is_logged_in:
+    # Check if authentication is configured
+    try:
+        is_logged_in = st.user.is_logged_in
+        user_name = st.user.name if is_logged_in else "Guest"
+    except (AttributeError, KeyError):
+        # Authentication not configured, run in demo mode
+        is_logged_in = True
+        user_name = "Demo User"
+    
+    if not is_logged_in:
         login_screen()
         return
 
-    st.sidebar.success(f"Welcome, {st.user.name}!")
-    st.button("Log out", on_click=st.logout)
+    # Show welcome message
+    if user_name != "Demo User":
+        st.sidebar.success(f"Welcome, {user_name}!")
+        st.button("Log out", on_click=st.logout)
+    else:
+        st.sidebar.info("Running in demo mode (authentication not configured)")
+        st.sidebar.caption("Configure `.streamlit/secrets.toml` for Google OAuth")
     
     # Balance overview in sidebar
     st.sidebar.markdown("---")
